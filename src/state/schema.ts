@@ -5,7 +5,7 @@
  * The database IS the automaton's memory.
  */
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 16;
 
 export const CREATE_TABLES = `
   -- Schema version tracking
@@ -678,4 +678,196 @@ export const MIGRATION_V10 = `
 
   CREATE INDEX idx_knowledge_category ON knowledge_store(category);
   CREATE INDEX idx_knowledge_key ON knowledge_store(key);
+`;
+
+// === Revenue Intelligence + Experiment Persistence ===
+
+export const MIGRATION_V12 = `
+  -- Schema version: 12
+  -- Tables: revenue_opportunities, revenue_experiments, economic_events
+
+  CREATE TABLE IF NOT EXISTS revenue_opportunities (
+    id TEXT PRIMARY KEY,                           -- ULID
+    goal_id TEXT REFERENCES goals(id),
+    name TEXT NOT NULL,
+    niche TEXT,
+    status TEXT NOT NULL DEFAULT 'discovered',     -- discovered|screening|validating|active|paused|scale|kill|completed
+    evidence_level TEXT,
+    confidence REAL,
+    probability_success REAL,
+    expected_revenue_cents INTEGER DEFAULT 0,
+    expected_cost_cents INTEGER DEFAULT 0,
+    expected_net_value_cents INTEGER DEFAULT 0,
+    time_to_revenue_days REAL,
+    max_experiment_budget_cents INTEGER DEFAULT 0,
+    focus_rank INTEGER,
+    hypothesis TEXT,
+    kill_condition TEXT,
+    next_action TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_opportunities_status
+    ON revenue_opportunities(status);
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_opportunities_goal
+    ON revenue_opportunities(goal_id);
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_opportunities_focus
+    ON revenue_opportunities(focus_rank);
+
+  CREATE TABLE IF NOT EXISTS revenue_experiments (
+    id TEXT PRIMARY KEY,                           -- ULID
+    opportunity_id TEXT NOT NULL REFERENCES revenue_opportunities(id),
+    goal_id TEXT REFERENCES goals(id),
+    task_id TEXT REFERENCES task_graph(id),
+    status TEXT NOT NULL DEFAULT 'planned',        -- planned|running|completed|failed|stopped
+    hypothesis TEXT NOT NULL,
+    channel TEXT,
+    offer TEXT,
+    max_budget_cents INTEGER DEFAULT 0,
+    max_inference_cost_cents INTEGER DEFAULT 0,
+    max_duration_hours REAL,
+    success_criteria TEXT,
+    failure_criteria TEXT,
+    stop_condition TEXT,
+    forecast_revenue_cents INTEGER DEFAULT 0,
+    forecast_cost_cents INTEGER DEFAULT 0,
+    forecast_probability_success REAL,
+    forecast_time_to_revenue_hours REAL,
+    actual_revenue_cents INTEGER DEFAULT 0,
+    actual_cost_cents INTEGER DEFAULT 0,
+    result TEXT,
+    lesson TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_experiments_opportunity
+    ON revenue_experiments(opportunity_id);
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_experiments_status
+    ON revenue_experiments(status);
+
+  CREATE INDEX IF NOT EXISTS idx_revenue_experiments_goal
+    ON revenue_experiments(goal_id);
+
+  CREATE TABLE IF NOT EXISTS economic_events (
+    id TEXT PRIMARY KEY,                           -- ULID
+    opportunity_id TEXT REFERENCES revenue_opportunities(id),
+    experiment_id TEXT REFERENCES revenue_experiments(id),
+    goal_id TEXT REFERENCES goals(id),
+    task_id TEXT REFERENCES task_graph(id),
+    event_type TEXT NOT NULL,                      -- lead|qualified_lead|commitment|payment|refund|cost|delivery|renewal|expansion|referral|other
+    category TEXT,
+    amount_cents INTEGER DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    channel TEXT,
+    offer TEXT,
+    customer_ref TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    occurred_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_economic_events_opportunity
+    ON economic_events(opportunity_id, occurred_at);
+
+  CREATE INDEX IF NOT EXISTS idx_economic_events_experiment
+    ON economic_events(experiment_id, occurred_at);
+
+  CREATE INDEX IF NOT EXISTS idx_economic_events_type
+    ON economic_events(event_type, occurred_at);
+
+  CREATE INDEX IF NOT EXISTS idx_economic_events_customer
+    ON economic_events(customer_ref, occurred_at);
+`;
+
+export const MIGRATION_V13 = `
+  -- Schema version: 13
+  -- Attribute inference costs directly to revenue experiments
+  ALTER TABLE inference_costs ADD COLUMN experiment_id TEXT REFERENCES revenue_experiments(id);
+  CREATE INDEX IF NOT EXISTS idx_inf_experiment ON inference_costs(experiment_id);
+`;
+
+// Pending reservations deliberately have no TTL: a timeout/restart does not
+// prove that the provider did not charge. Reconcile before releasing them.
+export const MIGRATION_V14 = `
+  CREATE TABLE IF NOT EXISTS inference_reservations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    experiment_id TEXT REFERENCES revenue_experiments(id),
+    model TEXT NOT NULL,
+    reserved_cents INTEGER NOT NULL CHECK(reserved_cents >= 0),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'settled')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    settled_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_inference_reservations_pending
+    ON inference_reservations(status, session_id, experiment_id);
+`;
+
+export const MIGRATION_V15 = `
+  CREATE TABLE IF NOT EXISTS inference_reservation_context (
+    reservation_id TEXT PRIMARY KEY REFERENCES inference_reservations(id),
+    provider TEXT NOT NULL,
+    turn_id TEXT,
+    tier TEXT NOT NULL,
+    task_type TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS inference_budget_policy (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    daily_cents INTEGER CHECK(daily_cents IS NULL OR daily_cents >= 0),
+    hourly_cents INTEGER CHECK(hourly_cents IS NULL OR hourly_cents >= 0),
+    session_cents INTEGER CHECK(session_cents IS NULL OR session_cents >= 0),
+    call_cents INTEGER CHECK(call_cents IS NULL OR call_cents >= 0),
+    halted INTEGER NOT NULL DEFAULT 0 CHECK(halted IN (0,1)),
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE IF NOT EXISTS inference_budget_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS inference_reconciliations (
+    reservation_id TEXT PRIMARY KEY REFERENCES inference_reservations(id),
+    receipt_id TEXT NOT NULL UNIQUE,
+    digest TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    cost_cents INTEGER NOT NULL CHECK(cost_cents >= 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`;
+
+export const MIGRATION_V16 = `
+  CREATE TABLE revenue_experiment_baselines (
+    experiment_id TEXT PRIMARY KEY REFERENCES revenue_experiments(id),
+    snapshot TEXT NOT NULL,
+    captured_at TEXT NOT NULL DEFAULT(datetime('now'))
+  );
+  CREATE TRIGGER experiment_baseline_insert AFTER INSERT ON revenue_experiments
+  WHEN NEW.status='running'
+  BEGIN
+    INSERT INTO revenue_experiment_baselines(experiment_id,snapshot) VALUES(NEW.id,
+      json_object('forecastRevenueCents',NEW.forecast_revenue_cents,'forecastCostCents',NEW.forecast_cost_cents,
+        'probability',NEW.forecast_probability_success,'timeHours',NEW.forecast_time_to_revenue_hours,
+        'hypothesis',NEW.hypothesis,'success',NEW.success_criteria,'failure',NEW.failure_criteria,'stop',NEW.stop_condition));
+  END;
+  CREATE TRIGGER experiment_baseline_start AFTER UPDATE OF status ON revenue_experiments
+  WHEN OLD.status='planned' AND NEW.status='running'
+    AND NOT EXISTS(SELECT 1 FROM revenue_experiment_baselines WHERE experiment_id=NEW.id)
+  BEGIN
+    INSERT INTO revenue_experiment_baselines(experiment_id,snapshot) VALUES(NEW.id,
+      json_object('forecastRevenueCents',NEW.forecast_revenue_cents,'forecastCostCents',NEW.forecast_cost_cents,
+        'probability',NEW.forecast_probability_success,'timeHours',NEW.forecast_time_to_revenue_hours,
+        'hypothesis',NEW.hypothesis,'success',NEW.success_criteria,'failure',NEW.failure_criteria,'stop',NEW.stop_condition));
+  END;
+  CREATE TRIGGER experiment_baseline_no_update BEFORE UPDATE ON revenue_experiment_baselines
+  BEGIN SELECT RAISE(ABORT,'Experiment baseline is immutable'); END;
+  CREATE TRIGGER experiment_baseline_no_delete BEFORE DELETE ON revenue_experiment_baselines
+  BEGIN SELECT RAISE(ABORT,'Experiment baseline is immutable'); END;
 `;

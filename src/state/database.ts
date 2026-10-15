@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Automaton Database
  *
  * SQLite-backed persistent state for the automaton.
@@ -46,6 +46,11 @@ import {
   MIGRATION_V9_ALTER_CHILDREN_ROLE,
   MIGRATION_V10,
   MIGRATION_V11,
+  MIGRATION_V12,
+  MIGRATION_V13,
+  MIGRATION_V16,
+  MIGRATION_V15,
+  MIGRATION_V14,
 } from "./schema.js";
 import type {
   RiskLevel,
@@ -115,7 +120,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(SCHEMA_VERSION);
   }
 
-  // ─── Identity ────────────────────────────────────────────────
+  // â”€â”€â”€ Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getIdentity = (key: string): string | undefined => {
     const row = db
@@ -130,7 +135,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(key, value);
   };
 
-  // ─── Turns ───────────────────────────────────────────────────
+  // â”€â”€â”€ Turns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertTurn = (turn: AgentTurn): void => {
     db.prepare(
@@ -172,7 +177,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return row.count;
   };
 
-  // ─── Tool Calls ──────────────────────────────────────────────
+  // â”€â”€â”€ Tool Calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertToolCall = (
     turnId: string,
@@ -199,7 +204,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return rows.map(deserializeToolCall);
   };
 
-  // ─── Heartbeat ───────────────────────────────────────────────
+  // â”€â”€â”€ Heartbeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getHeartbeatEntries = (): HeartbeatEntry[] => {
     const rows = db
@@ -232,7 +237,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(timestamp, name);
   };
 
-  // ─── Transactions ────────────────────────────────────────────
+  // â”€â”€â”€ Transactions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertTransaction = (txn: Transaction): void => {
     db.prepare(
@@ -256,7 +261,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return rows.map(deserializeTransaction).reverse();
   };
 
-  // ─── Installed Tools ─────────────────────────────────────────
+  // â”€â”€â”€ Installed Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getInstalledTools = (): InstalledTool[] => {
     const rows = db
@@ -285,7 +290,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(id);
   };
 
-  // ─── Modifications ───────────────────────────────────────────
+  // â”€â”€â”€ Modifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertModification = (mod: ModificationEntry): void => {
     db.prepare(
@@ -313,7 +318,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return rows.map(deserializeModification).reverse();
   };
 
-  // ─── Key-Value Store ─────────────────────────────────────────
+  // â”€â”€â”€ Key-Value Store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getKV = (key: string): string | undefined => {
     const row = db
@@ -339,7 +344,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return row?.value;
   };
 
-  // ─── Skills ─────────────────────────────────────────────────
+  // â”€â”€â”€ Skills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getSkills = (enabledOnly?: boolean): Skill[] => {
     const query = enabledOnly
@@ -377,7 +382,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     db.prepare("UPDATE skills SET enabled = 0 WHERE name = ?").run(name);
   };
 
-  // ─── Children ──────────────────────────────────────────────
+  // â”€â”€â”€ Children â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getChildren = (): ChildAutomaton[] => {
     const rows = db
@@ -417,7 +422,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(status, id);
   };
 
-  // ─── Registry ──────────────────────────────────────────────
+  // â”€â”€â”€ Registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getRegistryEntry = (): RegistryEntry | undefined => {
     const row = db
@@ -440,7 +445,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     );
   };
 
-  // ─── Reputation ────────────────────────────────────────────
+  // â”€â”€â”€ Reputation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertReputation = (entry: ReputationEntry): void => {
     db.prepare(
@@ -465,7 +470,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     return rows.map(deserializeReputation);
   };
 
-  // ─── Inbox Messages ──────────────────────────────────────────
+  // â”€â”€â”€ Inbox Messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const insertInboxMessage = (msg: InboxMessage): void => {
     db.prepare(
@@ -495,7 +500,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     ).run(id);
   };
 
-  // ─── Agent State ─────────────────────────────────────────────
+  // â”€â”€â”€ Agent State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const getAgentState = (): AgentState => {
     return validateAgentState(getKV("agent_state"));
@@ -505,14 +510,14 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
     setKV("agent_state", state);
   };
 
-  // ─── Transaction Helper ──────────────────────────────────────
+  // â”€â”€â”€ Transaction Helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const runTransaction = <T>(fn: () => T): T => {
     const transaction = db.transaction(() => fn());
     return transaction();
   };
 
-  // ─── Close ───────────────────────────────────────────────────
+  // â”€â”€â”€ Close â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const close = (): void => {
     db.close();
@@ -564,7 +569,7 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
   };
 }
 
-// ─── Migration Runner ───────────────────────────────────────────
+// â”€â”€â”€ Migration Runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function applyMigrations(db: DatabaseType): void {
   const versionRow = db
@@ -585,11 +590,11 @@ function applyMigrations(db: DatabaseType): void {
       version: 4,
       apply: () => {
         db.exec(MIGRATION_V4);
-        try { db.exec(MIGRATION_V4_ALTER); } catch { logger.debug("V4 ALTER (to_address) skipped — column likely exists"); }
-        try { db.exec(MIGRATION_V4_ALTER2); } catch { logger.debug("V4 ALTER (raw_content) skipped — column likely exists"); }
-        try { db.exec(MIGRATION_V4_ALTER_INBOX_STATUS); } catch { logger.debug("V4 ALTER (inbox status) skipped — column likely exists"); }
-        try { db.exec(MIGRATION_V4_ALTER_INBOX_RETRY); } catch { logger.debug("V4 ALTER (inbox retry_count) skipped — column likely exists"); }
-        try { db.exec(MIGRATION_V4_ALTER_INBOX_MAX_RETRIES); } catch { logger.debug("V4 ALTER (inbox max_retries) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V4_ALTER); } catch { logger.debug("V4 ALTER (to_address) skipped â€” column likely exists"); }
+        try { db.exec(MIGRATION_V4_ALTER2); } catch { logger.debug("V4 ALTER (raw_content) skipped â€” column likely exists"); }
+        try { db.exec(MIGRATION_V4_ALTER_INBOX_STATUS); } catch { logger.debug("V4 ALTER (inbox status) skipped â€” column likely exists"); }
+        try { db.exec(MIGRATION_V4_ALTER_INBOX_RETRY); } catch { logger.debug("V4 ALTER (inbox retry_count) skipped â€” column likely exists"); }
+        try { db.exec(MIGRATION_V4_ALTER_INBOX_MAX_RETRIES); } catch { logger.debug("V4 ALTER (inbox max_retries) skipped â€” column likely exists"); }
       },
     },
     {
@@ -625,6 +630,23 @@ function applyMigrations(db: DatabaseType): void {
         try { db.exec(MIGRATION_V11); } catch { /* column may already exist */ }
       },
     },
+    {
+      version: 12,
+      apply: () => db.exec(MIGRATION_V12),
+    },
+    {
+      version: 13,
+      apply: () => db.exec(MIGRATION_V13),
+    },
+    {
+      version: 14,
+      apply: () => db.exec(MIGRATION_V14),
+    },
+    {
+      version: 15,
+      apply: () => db.exec(MIGRATION_V15),
+    },
+    {version:16,apply:()=>db.exec(MIGRATION_V16)},
   ];
 
   for (const m of migrations) {
@@ -638,7 +660,7 @@ function applyMigrations(db: DatabaseType): void {
   }
 }
 
-// ─── Exported Helpers ───────────────────────────────────────────
+// â”€â”€â”€ Exported Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function withTransaction<T>(db: DatabaseType, fn: () => T): T {
   const transaction = db.transaction(() => fn());
@@ -649,7 +671,7 @@ export function checkpointWAL(db: DatabaseType): void {
   db.pragma("wal_checkpoint(TRUNCATE)");
 }
 
-// ─── DB Row Types ──────────────────────────────────────────────
+// â”€â”€â”€ DB Row Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PolicyDecisionRow {
   id: string;
@@ -746,7 +768,7 @@ export interface KnowledgeStoreRow {
   expiresAt: string | null;
 }
 
-// ─── Policy Decision Helpers ────────────────────────────────────
+// â”€â”€â”€ Policy Decision Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertPolicyDecision(db: DatabaseType, row: PolicyDecisionRow): void {
   db.prepare(
@@ -809,7 +831,7 @@ export function getPolicyDecisions(
   }));
 }
 
-// ─── Spend Tracking Helpers ─────────────────────────────────────
+// â”€â”€â”€ Spend Tracking Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertSpendRecord(db: DatabaseType, entry: SpendTrackingRow): void {
   db.prepare(
@@ -849,7 +871,7 @@ export function pruneSpendRecords(db: DatabaseType, olderThan: string): number {
   return result.changes;
 }
 
-// ─── Phase 0 + 1: Goals / Tasks / Events / Knowledge ───────────
+// â”€â”€â”€ Phase 0 + 1: Goals / Tasks / Events / Knowledge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertGoal(
   db: DatabaseType,
@@ -1189,7 +1211,7 @@ export function deleteKnowledge(db: DatabaseType, id: string): void {
   db.prepare("DELETE FROM knowledge_store WHERE id = ?").run(id);
 }
 
-// ─── Heartbeat Schedule Helpers (Phase 1.1) ─────────────────────
+// â”€â”€â”€ Heartbeat Schedule Helpers (Phase 1.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function getHeartbeatSchedule(db: DatabaseType): HeartbeatScheduleRow[] {
   const rows = db
@@ -1265,7 +1287,7 @@ export function upsertHeartbeatSchedule(db: DatabaseType, row: HeartbeatSchedule
   );
 }
 
-// ─── Heartbeat History Helpers (Phase 1.1) ──────────────────────
+// â”€â”€â”€ Heartbeat History Helpers (Phase 1.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertHeartbeatHistory(db: DatabaseType, entry: HeartbeatHistoryRow): void {
   db.prepare(
@@ -1292,7 +1314,7 @@ export function getHeartbeatHistory(db: DatabaseType, taskName: string, limit = 
   return rows.map(deserializeHeartbeatHistoryRow);
 }
 
-// ─── Lease Management Helpers (Phase 1.1) ───────────────────────
+// â”€â”€â”€ Lease Management Helpers (Phase 1.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function acquireTaskLease(db: DatabaseType, taskName: string, owner: string, ttlMs: number): boolean {
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
@@ -1322,7 +1344,7 @@ export function clearExpiredLeases(db: DatabaseType): number {
   return result.changes;
 }
 
-// ─── Wake Event Helpers (Phase 1.1) ─────────────────────────────
+// â”€â”€â”€ Wake Event Helpers (Phase 1.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertWakeEvent(db: DatabaseType, source: string, reason: string, payload?: object): void {
   db.prepare(
@@ -1347,7 +1369,7 @@ export function getUnconsumedWakeEvents(db: DatabaseType): WakeEventRow[] {
   return rows.map(deserializeWakeEventRow);
 }
 
-// ─── KV Pruning Helpers (Phase 1.6) ─────────────────────────────
+// â”€â”€â”€ KV Pruning Helpers (Phase 1.6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function pruneStaleKV(db: DatabaseType, prefix: string, retentionDays: number): number {
   const result = db.prepare(
@@ -1356,7 +1378,7 @@ export function pruneStaleKV(db: DatabaseType, prefix: string, retentionDays: nu
   return result.changes;
 }
 
-// ─── Dedup Helpers (Phase 1.1) ──────────────────────────────────
+// â”€â”€â”€ Dedup Helpers (Phase 1.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertDedupKey(db: DatabaseType, key: string, taskName: string, ttlMs: number): boolean {
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
@@ -1366,7 +1388,7 @@ export function insertDedupKey(db: DatabaseType, key: string, taskName: string, 
     ).run(key, taskName, expiresAt);
     return true;
   } catch (error) {
-    // Key already exists (duplicate) — expected for dedup
+    // Key already exists (duplicate) â€” expected for dedup
     logger.debug("Dedup key insert failed (likely duplicate)");
     return false;
   }
@@ -1386,10 +1408,10 @@ export function isDeduplicated(db: DatabaseType, key: string): boolean {
   return !!row;
 }
 
-// ─── Inbox State Machine Helpers (Phase 1.2) ─────────────────────
+// â”€â”€â”€ Inbox State Machine Helpers (Phase 1.2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function claimInboxMessages(db: DatabaseType, limit: number): InboxMessageRow[] {
-  // Atomically claim messages: received → in_progress, increment retry_count
+  // Atomically claim messages: received â†’ in_progress, increment retry_count
   // Wrapped in a transaction to prevent race conditions where concurrent callers
   // SELECT the same rows before either UPDATE runs.
   const claimTx = db.transaction(() => {
@@ -1476,7 +1498,7 @@ export interface InboxMessageRow {
   maxRetries: number;
 }
 
-// ─── Safe JSON Parse ────────────────────────────────────────────
+// â”€â”€â”€ Safe JSON Parse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function safeJsonParse<T>(raw: string, fallback: T, context: string): T {
   try {
@@ -1487,7 +1509,7 @@ function safeJsonParse<T>(raw: string, fallback: T, context: string): T {
   }
 }
 
-// ─── Agent State Validation ─────────────────────────────────────
+// â”€â”€â”€ Agent State Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const VALID_AGENT_STATES: Set<string> = new Set([
   "setup", "waking", "running", "sleeping", "low_compute", "critical", "dead",
@@ -1502,7 +1524,7 @@ function validateAgentState(value: string | undefined): AgentState {
   return "setup";
 }
 
-// ─── Deserializers ─────────────────────────────────────────────
+// â”€â”€â”€ Deserializers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function deserializeTurn(row: any): AgentTurn {
   return {
@@ -1640,7 +1662,7 @@ function deserializeReputation(row: any): ReputationEntry {
   };
 }
 
-// ─── Phase 1.1 Deserializers ────────────────────────────────────
+// â”€â”€â”€ Phase 1.1 Deserializers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function deserializeHeartbeatScheduleRow(row: any): HeartbeatScheduleRow {
   return {
@@ -1687,7 +1709,7 @@ function deserializeWakeEventRow(row: any): WakeEventRow {
   };
 }
 
-// ─── Phase 2.1: Soul History Helpers ─────────────────────────────
+// â”€â”€â”€ Phase 2.1: Soul History Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function insertSoulHistory(db: DatabaseType, row: SoulHistoryRow): void {
   db.prepare(
@@ -1748,7 +1770,7 @@ function deserializeSoulHistoryRow(row: any): SoulHistoryRow {
   };
 }
 
-// ─── Phase 2.2: Memory DB Helpers ────────────────────────────────
+// â”€â”€â”€ Phase 2.2: Memory DB Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Working memory
 export function wmInsert(db: DatabaseType, entry: Omit<WorkingMemoryEntry, "id" | "createdAt">): string {
@@ -2022,7 +2044,7 @@ export function relationshipDelete(db: DatabaseType, entityAddress: string): voi
   catch (error) { logger.error("relationshipDelete failed", error instanceof Error ? error : undefined); }
 }
 
-// ─── Phase 2.2: Memory Deserializers ─────────────────────────────
+// â”€â”€â”€ Phase 2.2: Memory Deserializers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function deserializeWorkingMemoryRow(row: any): WorkingMemoryEntry {
   return { id: row.id, sessionId: row.session_id, content: row.content, contentType: row.content_type,
@@ -2067,17 +2089,18 @@ function deserializeRelationshipRow(row: any): RelationshipMemoryEntry {
     notes: row.notes ?? null, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
-// ─── Phase 2.3: Inference Cost Helpers ──────────────────────────
+// â”€â”€â”€ Phase 2.3: Inference Cost Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function inferenceInsertCost(db: DatabaseType, row: Omit<InferenceCostRow, "id" | "createdAt">): string {
   const id = ulid();
   db.prepare(
-    `INSERT INTO inference_costs (id, session_id, turn_id, model, provider, input_tokens, output_tokens, cost_cents, latency_ms, tier, task_type, cache_hit)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO inference_costs (id, session_id, turn_id, experiment_id, model, provider, input_tokens, output_tokens, cost_cents, latency_ms, tier, task_type, cache_hit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     row.sessionId,
     row.turnId,
+    row.experimentId,
     row.model,
     row.provider,
     row.inputTokens,
@@ -2098,6 +2121,15 @@ export function inferenceGetSessionCosts(db: DatabaseType, sessionId: string): I
   return rows.map(deserializeInferenceCostRow);
 }
 
+
+export function inferenceGetExperimentCost(db: DatabaseType, experimentId: string): number {
+  const row = db
+    .prepare(
+      "SELECT COALESCE(SUM(cost_cents), 0) as total FROM inference_costs WHERE experiment_id = ?",
+    )
+    .get(experimentId) as { total: number };
+  return row.total;
+}
 export function inferenceGetDailyCost(db: DatabaseType, date?: string): number {
   const targetDate = date || new Date().toISOString().slice(0, 10);
   // Compute the next day to use as exclusive upper bound, avoiding the off-by-one
@@ -2145,7 +2177,7 @@ export function inferencePruneCosts(db: DatabaseType, retentionDays: number): nu
   return result.changes;
 }
 
-// ─── Phase 2.3: Model Registry Helpers ──────────────────────────
+// â”€â”€â”€ Phase 2.3: Model Registry Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function modelRegistryUpsert(db: DatabaseType, entry: ModelRegistryRow): void {
   db.prepare(
@@ -2213,6 +2245,7 @@ function deserializeInferenceCostRow(row: any): InferenceCostRow {
     id: row.id,
     sessionId: row.session_id,
     turnId: row.turn_id ?? null,
+    experimentId: row.experiment_id ?? null,
     model: row.model,
     provider: row.provider,
     inputTokens: row.input_tokens,
@@ -2314,7 +2347,7 @@ function deserializeKnowledgeStoreRow(row: any): KnowledgeStoreRow {
   };
 }
 
-// ─── Phase 3.1: Lifecycle DB Helpers ─────────────────────────────
+// â”€â”€â”€ Phase 3.1: Lifecycle DB Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function lifecycleInsertEvent(db: DatabaseType, row: ChildLifecycleEventRow): void {
   db.prepare(
@@ -2374,7 +2407,7 @@ function deserializeLifecycleEventRow(row: any): ChildLifecycleEventRow {
   };
 }
 
-// ─── Phase 3.2: Agent Cache DB Helpers ──────────────────────────
+// â”€â”€â”€ Phase 3.2: Agent Cache DB Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function agentCacheUpsert(db: DatabaseType, row: DiscoveredAgentCacheRow): void {
   db.prepare(
@@ -2434,7 +2467,7 @@ function deserializeAgentCacheRow(row: any): DiscoveredAgentCacheRow {
   };
 }
 
-// ─── Phase 3.2: Onchain Transaction DB Helpers ──────────────────
+// â”€â”€â”€ Phase 3.2: Onchain Transaction DB Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function onchainTxInsert(db: DatabaseType, row: OnchainTransactionRow): void {
   db.prepare(
@@ -2491,7 +2524,7 @@ function deserializeOnchainTxRow(row: any): OnchainTransactionRow {
   };
 }
 
-// ─── Phase 4.1: Metrics Snapshot DB Helpers ─────────────────────
+// â”€â”€â”€ Phase 4.1: Metrics Snapshot DB Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function metricsInsertSnapshot(db: DatabaseType, row: MetricSnapshotRow): void {
   db.prepare(

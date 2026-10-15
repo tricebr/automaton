@@ -37,3 +37,5 @@ export function taskProgress(task){
  const own=task.source==='own';
  return {labels:own?['Geplant','Bearbeiten','Prüfen','Fertig']:['Geplant','Arbeiten','Automatisch prüfen','Ergebnis bereit'],current:task.status==='done'?3:['review','verifying'].includes(task.status)?2:['working','running','blocked','failed'].includes(task.status)?1:0};
 }
+
+export function rememberDraft(input){if(input.tagName==='SELECT'){for(const option of input.options)option.defaultSelected=option.value===input.value;}else input.defaultValue=input.value;}

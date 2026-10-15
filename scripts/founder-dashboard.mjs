@@ -95,12 +95,13 @@ export function createFounderStore(base=root,operations){
 
 }
 
-export async function startFounderDashboard({store=createFounderStore(),port=0,readTrading,readCoinbase,readStripe,readFinance,readUsage=createAmplitudeReader(),tradeJournal,tradeRadar,tradingEngine,longHistory,autonomy,ledger,costImport,billing}={}){
+export async function startFounderDashboard({store=createFounderStore(),port=0,readTrading,readCoinbase,readStripe,readFinance,readUsage=createAmplitudeReader(),tradeJournal,tradeRadar,tradingEngine,longHistory,autonomy,ledger,costImport,billing,power}={}){
 
- let financeCache,financeCacheAt=0;const finance=boundedReader(readFinance?async()=>{if(financeCache&&Date.now()-financeCacheAt<300000)return financeCache;const report=await readFinance();if(['connected','reconciled-provider','partial'].includes(report?.status)&&Array.isArray(report.transactions)){financeCache=report;financeCacheAt=Date.now();}return report;}:undefined);
+ const poweredRead=read=>read?()=>power&&!power.isOn()?Promise.resolve({status:'powered-off'}):read():undefined;
+ let financeCache,financeCacheAt=0;const finance=boundedReader(readFinance?async()=>{if(power&&!power.isOn())return {status:'powered-off'};if(financeCache&&Date.now()-financeCacheAt<300000)return financeCache;const report=await readFinance();if(['connected','reconciled-provider','partial'].includes(report?.status)&&Array.isArray(report.transactions)){financeCache=report;financeCacheAt=Date.now();}return report;}:undefined);
 
- const stripe=boundedReader(readStripe),coinbase=boundedReader(readCoinbase),trading=boundedReader(readTrading);
- const usage=boundedReader(readUsage);
+ const stripe=boundedReader(poweredRead(readStripe)),coinbase=boundedReader(poweredRead(readCoinbase)),trading=boundedReader(poweredRead(readTrading));
+ const usage=boundedReader(poweredRead(readUsage));
 
  const bootstrap=randomBytes(32).toString('hex'),session=randomBytes(32).toString('hex'),csrf=randomBytes(32).toString('hex');
 
@@ -149,6 +150,13 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
    if(!equal(cookie,session)){json(401,{error:'Bitte über den persönlichen Startlink öffnen.'});return;}
 
+   if(power&&req.method==='GET'&&req.url==='/api/power'){json(200,{power:power.snapshot(),csrf});return;}
+   if(power&&req.method==='POST'&&req.url==='/api/power'&&equal(req.headers['x-obolus-csrf'],csrf)){
+    if(body?.enabled===true&&(body.intent!=='founder-start-confirmed'||Object.keys(body).sort().join(',')!=='enabled,intent,revision')){json(403,{error:'Start nur über den bewusst bestätigten Einschalter.'});return;}
+    const command=body?.enabled===true?{enabled:true,revision:body.revision}:body;
+    json(200,{power:power.control(command),csrf});return;
+   }
+
    if(req.method==='GET'&&req.url==='/api/finance/snapshot'){
     const latest=await finance();
     const available=['connected','reconciled-provider','partial'].includes(latest.status)&&Array.isArray(latest.transactions);
@@ -169,13 +177,14 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
    if(longHistory&&req.method==='GET'&&req.url==='/api/long-history/lessons'){json(200,longHistory.lessons());return;}
    if(longHistory&&req.method==='GET'&&/^\/api\/long-history\/reports\/[a-zA-Z0-9_-]{1,100}$/.test(req.url)){json(200,longHistory.report(req.url.slice('/api/long-history/reports/'.length)));return;}
    if(longHistory&&req.method==='POST'&&req.url==='/api/long-history/control'&&equal(req.headers['x-obolus-csrf'],csrf)){
+    if(power&&!power.isOn()&&body?.action==='resume'){json(409,{error:'Bitte Numaron zuerst einschalten.'});return;}
     if(!body||Object.keys(body).length!==1||!['pause','resume','stop'].includes(body.action)){json(400,{error:'Unbekannte Forschungsaktion.'});return;}
     const result=longHistory.control(body.action);json(200,{longHistory:result,csrf});if(body.action==='resume')void longHistory.tick?.().catch(()=>{});return;
    }
 
    if(tradingEngine&&req.method==='POST'&&req.url==='/api/trading/control'&&equal(req.headers['x-obolus-csrf'],csrf)){json(200,{tradingEngine:tradingEngine.control(body),csrf});return;}
 
-   if(autonomy&&req.method==='POST'&&req.url==='/api/control'&&equal(req.headers['x-obolus-csrf'],csrf)){json(200,{autonomy:autonomy.control(body),csrf});return;}
+   if(autonomy&&req.method==='POST'&&req.url==='/api/control'&&equal(req.headers['x-obolus-csrf'],csrf)){if(power&&['stop','emergency-stop'].includes(body?.action)){json(200,{power:power.control({enabled:false,revision:power.snapshot().revision}),csrf});return;}if(power&&!power.isOn()){json(409,{error:'Numaron ist ausgeschaltet. Bitte den gemeinsamen Einschalter verwenden.'});return;}json(200,{autonomy:autonomy.control(body),csrf});return;}
 
    if(req.method==='GET'&&/^\/product\/[a-z0-9-]+$/.test(req.url)){const id=req.url.slice(9);const b=store.document(id);res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Content-Disposition':`inline; filename="${id}.txt"`});res.end(b);return;}
 
@@ -215,4 +224,3 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
  for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{void ui.close();});
 
 }
-

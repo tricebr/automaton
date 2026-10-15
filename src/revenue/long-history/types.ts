@@ -1,0 +1,15 @@
+import type {Bar} from '../paper-trading.js';
+export type DataKind='factor-returns'|'cash-ohlc'|'broker-bars'|'macro';
+export interface SourceRecord {id:string;label:string;kind:DataKind;urls:string[];allowedHosts:string[];licenseStatus:'pending'|'allowed'|'restricted'|'blocked';licenseEvidence:string;reviewedAt:string;}
+export interface QualityReport {valid:boolean;issues:string[];warnings?:string[];complete?:boolean;}
+export interface DatasetRecord {id:string;sourceId:string;rawSha256:string;normalizationVersion:string;revision:string;kind:DataKind;start:number;end:number;frequency:string;unit:string;currency:string|null;quality:QualityReport;limitations:string[];provenance:string;}
+export interface ReturnSeries {kind:'factor-returns';rows:{date:number;returnDecimals:number}[];field:string;currency:string|null;limitations:string[];}
+export interface CashSeries {kind:'cash-ohlc';bars:Bar[];symbol:string;currency:'USD'|'EUR'|'CHF';productEvidence:string;adjustmentEvidence:string;limitations:string[];}
+export interface MacroSeries {kind:'macro';rows:{date:number;annualRatePercent:number}[];field:string;currency:string|null;limitations:string[];}
+export type Series=ReturnSeries|CashSeries|MacroSeries;
+export interface RunConfig {id:string;registeredAt:number;datasetIds:string[];variantIds:string[];rulesVersion:string;requestedStart?:number;split:{developmentEnd:number;validationEnd:number;finalEnd:number};costs:Record<string,unknown>;seed:number;limits:Record<string,number>;codeHash:string;}
+export interface ResearchReport {id:string;runId:string;datasetId:string;kind:string;nativeCurrency:string|null;costStatus:'gross'|'model'|'documented'|'unknown';metrics:Record<string,unknown>;limitations:string[];decision:'nicht prüfbar'|'verworfen'|'weiter untersuchen'|'für Paper-Vorwärtstest geeignet';evidenceHashes:string[];liveAuthorized:false;}
+export interface Lesson {id:string;version:number;status:'Hypothese'|'beobachteter Zusammenhang'|'widerlegt'|'in bestimmten Tests gestützt'|'prospektiv gestützt';text:string;scope:string;sourceReportIds:string[];supportingEvidence:string[];contradictingEvidence:string[];supersedes:string|null;conceptKey?:string;application?:{markets:string[];horizon:'macro'|'intraday'|'research';use:string;check:string;counterEvidence:string;transferability:'context-only'|'dataset-only'};}
+export interface ResearchJob {id:string;status:'queued'|'running'|'completed'|'failed'|'cancelled';detail?:Record<string,unknown>;}
+export const HISTORY_LIMITS=Object.freeze({workers:1,downloads:2,fileBytes:100*1024*1024,archiveBytes:2*1024*1024*1024,roundMs:6*60*60*1000,requestMs:60000,variants:24,datasets:3,trials:72});
+export interface ResearchSnapshot {status:string;activity:string;coverage:{kind:DataKind;start:number;end:number;frequency:string;valid:boolean}[];counts:{sources:number;datasets:number;reports:number;jobs:number;failedJobs:number;lessons?:number;trials?:number;ready?:number;phaseOutcomes?:number};lastLesson:Pick<Lesson,'text'|'status'|'scope'>|null;limits:typeof HISTORY_LIMITS;blockers:string[];}

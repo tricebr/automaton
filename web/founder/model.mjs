@@ -1,4 +1,25 @@
 const zone='Europe/Zurich';
+export function codeCapability(c,a){
+ if(!a.codeOrders)return c;
+ if(c.kind==='code-execution')return {...c,reason:'Freie Code-Ausführung bleibt gesperrt. Begrenzte Code-Aufträge laufen über Auftrag vorbereiten, Code erstellen, Code prüfen und Einreichung.'};
+ if(c.kind.startsWith('order-')&&c.status==='blocked'&&c.reason==='Offline-Isolation erfolgreich geprüft.'&&!a.codeOrders.isolated)return {...c,reason:'Regelmässige Schutzprüfung läuft; neue Code-Ausführungen warten bis zum erfolgreichen Abschluss.'};
+ return c;
+}
+export function runtimeHealth(a={},now=Date.now()){
+ const tasks=a.tasks??[],counts=a.taskCounts??Object.fromEntries(['failed','blocked','queued','running','verifying'].map(status=>[status,tasks.filter(t=>t.status===status).length]));
+ const active=a.activeWorkers??((counts.running??0)+(counts.verifying??0)),nextAt=tasks.filter(t=>t.status==='queued').map(t=>t.nextEligibleAt??t.input?.notBefore).filter(t=>Number.isFinite(t)&&t>now).sort((x,y)=>x-y)[0]??null;
+ return {label:a.status==='running'?(active?'In Bearbeitung':'Eingeschaltet · wartet'):({paused:'Pausiert',stopped:'Ausgeschaltet',emergency_stopped:'Not-Aus aktiv'}[a.status]??'Status unbekannt'),active,failed:counts.failed??0,blocked:counts.blocked??0,queued:counts.queued??0,capabilityGaps:(a.capabilities??[]).filter(c=>c.status==='blocked').length,nextAt};
+}
+export function capabilityStatus(c){
+ if(c.status==='blocked')return /noch nicht geprüft/.test(c.reason??'')?'Seit Neustart ungeprüft':'Gesperrt';
+ if(c.lastOutcome?.status==='failed')return 'Letzter Lauf fehlgeschlagen';
+ if(c.lastOutcome?.status==='blocked')return 'Letzter Lauf blockiert';
+ return c.lastSuccessAt||c.status==='verified'?'Letzter Lauf erfolgreich · kein Nachweis dauerhafter Verfügbarkeit':'Eingerichtet · erfolgreicher Lauf noch offen';
+}
+export function taskWaitText(t,now=Date.now()){
+ const due=Math.max(t.nextEligibleAt??0,t.input?.notBefore??0,t.nextRetryAt??0);
+ return due>now?'Geplant ab '+new Date(due).toLocaleString('de-CH',{timeZone:zone})+' · bis dahin kein Aufruf und keine neue Reservierung.':'Wartet auf Vorarbeiten, eine Abrufpause oder einen freien Bearbeiter. Keine persönliche Bestätigung erforderlich.';
+}
 export function missionDeck(snapshot){
  const groups=workGroups(snapshot),completed=groups.all.filter(t=>t.status==='done').length,total=groups.all.length;
  return {state:snapshot.autonomy?.status??'unknown',completed,total,progress:total?Math.round(completed/total*100):0,

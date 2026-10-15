@@ -1,8 +1,8 @@
 import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs';
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
-import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck} from './model.mjs';
+import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck, runtimeHealth, capabilityStatus, taskWaitText, codeCapability} from './model.mjs';
 
-import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,explainTerm} from './interaction.mjs';
+import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,rememberDraft,explainTerm} from './interaction.mjs';
 
 import {renderTradingEngine,renderTradeHighlight} from './trading.mjs';
 
@@ -15,6 +15,18 @@ let financialPeriod='today';
 let radarDisplayed=null;
 
 let snapshot,csrf='',filter='Alle',busy=false;
+let latestPower,powerBusy=false,powerChanging=false;
+function renderPower(){
+ const box=$('powerControls');if(!box)return;
+ box.replaceChildren(el('strong',latestPower.enabled?'◉ Numaron ist eingeschaltet':'○ Numaron ist ausgeschaltet'));
+ box.append(el('p',latestPower.enabled?'Aufgaben, Forschung, Trading-Analyse und Kostenabrufe sind eingeschaltet. Echtgeld-Handel bleibt an seine bestehenden Prüfungen gebunden.':'Keine neue AI-Arbeit, Forschung, Marktbeobachtung oder Anbieterabfrage. Die lokale Bedienoberfläche bleibt erreichbar.'));
+ const turnOn=!latestPower.enabled,actionRevision=latestPower.revision;
+ const toggle=el('button',latestPower.enabled?'Numaron ausschalten':'Numaron einschalten');toggle.type='button';toggle.disabled=powerChanging;
+ toggle.onclick=async event=>{if(powerChanging)return;if(turnOn&&(!event?.isTrusted||!window.confirm('Numaron jetzt bewusst einschalten? Aufgaben, Forschung, Trading-Analyse und Anbieterabrufe werden aktiv und können innerhalb der bestehenden Freigaben Kosten verursachen.')) )return;powerChanging=true;renderPower();try{const r=await api('/api/power',{enabled:turnOn,revision:actionRevision,...(turnOn?{intent:'founder-start-confirmed'}:{})});csrf=r.csrf;latestPower=r.power;renderPower();void refresh();}catch(e){box.append(el('p',e.message));powerChanging=false;void refreshPower();return;}finally{powerChanging=false;}if(latestPower)renderPower();};
+ box.append(toggle);
+ if(latestPower.enabled){const stop=el('button','AI sofort stoppen');stop.type='button';stop.className='emergency-button';stop.onclick=async()=>{stop.disabled=true;try{const r=await api('/api/power',{enabled:false,revision:latestPower.revision});latestPower=r.power;csrf=r.csrf;renderPower();}catch(e){box.append(el('p',e.message));stop.disabled=false}};box.append(stop);}
+}
+async function refreshPower(){if(powerBusy||powerChanging)return;powerBusy=true;try{const r=await api('/api/power');csrf=r.csrf;latestPower=r.power;renderPower();}catch{const box=$('powerControls');if(box){const note=el('p','Betriebszustand derzeit nicht erreichbar. Der letzte bestätigte Zustand bleibt gespeichert.');note.setAttribute('role','status');if(latestPower)renderPower();box.append(note);}}finally{powerBusy=false;}}
 let latestFinance,financeBusy=false;
 async function refreshFinance(){
  if(financeBusy||hasUnsavedDraft())return;financeBusy=true;
@@ -26,6 +38,7 @@ async function refreshFinance(){
   for(const d of document.querySelectorAll('#financeDetails details'))if(expanded.has(d.querySelector('summary')?.textContent))d.open=true;
   $('financeRefreshStatus').textContent=financeRefreshMessage(result);
  }catch{
+  if(latestFinance){latestFinance={...latestFinance,financeStatus:{...latestFinance.financeStatus,reportAvailable:false}};snapshot=mergeFinanceSnapshot(snapshot,latestFinance);renderFinancialDetails();}
   $('financeRefreshStatus').textContent='Finanzverbindung unterbrochen. Angezeigte Zahlen sind der letzte geladene Stand; automatische Wiederholung folgt.';
  }finally{financeBusy=false;}
 }
@@ -185,18 +198,20 @@ function renderAutonomy(){
 
  const status={running:'Autonomer Founder-Betrieb läuft',paused:'Founder-Betrieb pausiert',stopped:'Founder-Betrieb ausgeschaltet',emergency_stopped:'Not-Aus aktiv'};
 
- $('controller').textContent=status[a.status]??a.status;
+ const health=runtimeHealth(a);
+ $('controller').textContent=health.label;
 
- $('controllerDetail').textContent=`${a.activeWorkers} von ${a.maxWorkers} Bearbeitern aktiv · ${a.scope}`;
+ $('controllerDetail').textContent=`${health.active} von ${a.maxWorkers} Bearbeitern aktiv · ${health.queued} wartend · ${health.failed} fehlgeschlagen · ${health.blocked} blockiert · ${health.capabilityGaps} Fähigkeiten gesperrt oder noch ungeprüft. ${health.nextAt?'Vorgemerkter Start (nur bei eingeschaltetem Betrieb): '+new Date(health.nextAt).toLocaleString('de-CH')+'. ':''}${a.scope}`;
 
  let controls=$('autonomyControls');if(!controls){controls=el('div');controls.id='autonomyControls';$('control').append(controls);}controls.replaceChildren();
 
- for(const [action,title] of founderControls(a.status)){
+ for(const [action,title] of (latestPower?[]:founderControls(a.status))){
 
   const b=el('button',action==='emergency-stop'?'AI sofort stoppen':title);if(action==='emergency-stop'){b.className='emergency-button';b.title='Stoppt AI-Aufgaben. Offene Trades bleiben bestehen.';}b.onclick=async()=>{b.disabled=true;try{await api('/api/control',{action,revision:a.revision});await refresh();}catch(e){$('error').textContent=e.message;b.disabled=false;}};controls.append(b);
 
  }
 
+ if(latestPower)controls.append(el('p','Die gemeinsame Ein-/Aus-Steuerung findest du oben auf jeder Seite.'));
  controls.append(el('small','AI sofort stoppen: Offene Trades bleiben bestehen.'));
 
  controls.append(el('p','Pause beginnt keine neue Arbeit und lässt laufende Aufrufe abschließen. Ausschalten und Not-Aus brechen lokale Aufrufe ab; bereits versandte externe Anfragen können trotzdem Kosten verursachen.'));
@@ -219,9 +234,11 @@ function renderAutonomy(){
 
  const caps=el('details');caps.append(el('summary','Verbindungen und Fähigkeiten'));
 
- const names={research:'Öffentliche Recherche','private-analysis':'Private Modellanalyse','order-report':'Auftragsberichte','finance-report':'Stripe-Transaktionsabgleich','code-execution':'Code-Ausführung','external-communication':'Externe Kommunikation','live-trading':'Echtgeld-Trading'};
+ const names={'order-discovery':'Code-Aufträge suchen','order-prepare':'Code-Auftrag vorbereiten','order-code':'Code erstellen','order-check':'Code prüfen','order-submit':'Geprüften Code einreichen',research:'Öffentliche Recherche','private-analysis':'Private Modellanalyse','order-report':'Auftragsberichte','finance-report':'Stripe-Transaktionsabgleich','code-execution':'Freie Code-Ausführung','external-communication':'Externe Kommunikation','live-trading':'Echtgeld-Trading'};
 
- for(const c of a.capabilities)caps.append(el('p',`${names[c.kind]??c.kind}: ${c.status==='verified'?'durch erfolgreichen Lauf bestätigt':c.status==='configured'?'eingerichtet, erfolgreicher Lauf noch offen':'nicht aktiv'}${c.reason?' · '+c.reason:''}`));box.append(caps);
+ for(const c of a.capabilities.map(c=>codeCapability(c,a)))caps.append(el('p',`${names[c.kind]??c.kind}: ${capabilityStatus(c)}${c.status==='blocked'&&c.reason?' · '+c.reason:''}${c.lastSuccessAt?' · letzter Erfolg '+new Date(c.lastSuccessAt).toLocaleString('de-CH'):''}`));box.append(caps);
+ if(a.codeOrders){const isolation=el('div',undefined,'notice');isolation.append(el('h3','Code-Isolation'),el('p',a.codeOrders.isolated?'Offline-Schutzprüfung erfolgreich.':(a.codeOrders.isolation?.code==='verified'?'Regelmässige Schutzprüfung läuft. Neue Code-Ausführungen warten auf den Abschluss.':a.codeOrders.isolation?.message??a.codeOrders.reason??'Offline-Schutzprüfung noch offen.')));if(a.codeOrders.isolation?.checkedAt)isolation.append(el('small','Geprüft: '+new Date(a.codeOrders.isolation.checkedAt).toLocaleString('de-CH')));box.append(isolation);}
+ const reservations=(b.entries??[]).filter(e=>e.actualCostRappen===null&&e.maxCostRappen>0);if(reservations.length){const holds=el('div',undefined,'notice');holds.append(el('h3','Ungeklärte Kostenreservierungen'),el('p',`${reservations.length} Aufrufe · ${money(reservations.reduce((n,e)=>n+e.maxCostRappen,0))} weiter gebunden. Ohne zuordenbaren Einzelbeleg werden Kosten weder als Null verbucht noch Aufrufe automatisch wiederholt.`));box.append(holds);}
 
  const methods=el('details');methods.id='founderMethods';methods.append(el('summary','Arbeitsmethoden'));
 
@@ -321,7 +338,7 @@ function renderTradeReview(data){
 
 
 
-async function refresh(){void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){document.querySelector('.neural-reactor')?.setAttribute('data-state','unknown');if($('reactorStatus'))$('reactorStatus').textContent='VERBINDUNG UNTERBROCHEN';if($('reactorDetail'))$('reactorDetail').textContent='Letzter Datenstand · Status wird geprüft';renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
+async function refresh(){void refreshPower();void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){document.querySelector('.neural-reactor')?.setAttribute('data-state','unknown');if($('reactorStatus'))$('reactorStatus').textContent='VERBINDUNG UNTERBROCHEN';if($('reactorDetail'))$('reactorDetail').textContent='Letzter Datenstand · Status wird geprüft';renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
 
 
 
@@ -451,7 +468,7 @@ void boot();
 
 
 
-setInterval(()=>{if(location.protocol!=='file:'&&!document.hidden&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))void refresh();},15000);
+setInterval(()=>{if(location.protocol!=='file:')void refreshPower();if(location.protocol!=='file:'&&!document.hidden&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))void refresh();},15000);
 
 
 
@@ -569,7 +586,7 @@ function renderUsage(report){
 
  box.replaceChildren(el('div','NUTZUNG','eyebrow'),el('h2','Website & Dashboard'));
 
- const labels={connected:'Daten von Amplitude',stale:'Datenstand veraltet · letzter Abruf fehlgeschlagen','not-configured':'Amplitude-Zugang noch nicht eingerichtet',unavailable:'Amplitude derzeit nicht abrufbar'};
+ const labels={connected:'Daten von Amplitude',stale:'Datenstand veraltet · letzter Abruf fehlgeschlagen','not-configured':'Amplitude-Zugang noch nicht eingerichtet',unavailable:'Amplitude derzeit nicht abrufbar','powered-off':'Numaron ausgeschaltet · kein neuer Amplitude-Abruf'};
 
  box.append(el('p',labels[report?.status]??'Noch kein Amplitude-Datenstand'));
 
@@ -641,7 +658,7 @@ function renderMissionDeck(){
  document.querySelector('.neural-reactor')?.setAttribute('data-state',deck.state);
  const states={running:'SYSTEM ONLINE',paused:'SYSTEM PAUSIERT',stopped:'SYSTEM AUS',emergency_stopped:'NOT-AUS AKTIV',unknown:'STATUS UNBEKANNT'};
  $('reactorStatus').textContent=states[deck.state]??'STATUS UNBEKANNT';
- $('reactorDetail').textContent=deck.state==='running'?deck.missions.length?'Missionen in Bearbeitung':'Bereit für die nächste Mission':'Letzter gemeldeter Betriebszustand';
+ $('reactorDetail').textContent=deck.state==='running'?runtimeHealth(snapshot.autonomy).label:'Letzter gemeldeter Betriebszustand';
  host.replaceChildren();
  const top=el('div',undefined,'deck-heading'),intro=el('div');intro.append(el('div','DEIN MISSION CONTROL','eyebrow'),el('h2','Aus Ideen wird Fortschritt.'));
  const badge=el('a',deck.results+' Ergebnisse ↗','deck-counter');badge.href='#products';top.append(intro,badge);host.append(top);
@@ -668,7 +685,7 @@ function renderFounderOverview(){
 
  const g=workGroups(snapshot);
 
- $('aiState').textContent={running:'AI arbeitet',paused:'AI pausiert',stopped:'AI ausgeschaltet',emergency_stopped:'AI sofort gestoppt'}[snapshot.autonomy?.status]??'AI-Status nicht verfügbar';
+ $('aiState').textContent=runtimeHealth(snapshot.autonomy).label;
 
  $('aiMissionCount').textContent=g.active.length+' offene Missionen · '+g.results.length+' Ergebnisse bereit';
 
@@ -705,7 +722,7 @@ function renderFounderOverview(){
  }
  $('workList').replaceChildren(...g.active.map(taskPanel));if(!g.active.length)$('workList').append(el('p','Aktuell keine laufende oder wartende Aufgabe.'));
 
- $('attentionList').replaceChildren(...g.attention.map((t,i)=>taskPanel({...t,attentionNumber:i+1})));if(!g.attention.length)$('attentionList').append(el('p','Keine blockierte Aufgabe und keine Aufgabe zur Abnahme.'));
+ $('attentionList').replaceChildren(...g.attention.map((t,i)=>taskPanel({...t,attentionNumber:i+1})));if(!g.attention.length)$('attentionList').append(el('p','Keine persönliche Entscheidung angefordert. '+(g.managedIssues.length?`${g.managedIssues.length} technische Fehler- oder Wartefälle stehen unter Aufgaben; sie sind damit nicht behoben.`:'Technische Zustände und gesperrte Fähigkeiten stehen unter Aufgaben.')));
 
  $('checkResults').replaceChildren(...g.checks.filter(t=>t.source==='product').map(reviewPanel));if(!g.checks.some(t=>t.source==='product'))$('checkResults').append(el('p',snapshot.autonomy?.autonomyContract?.mode==='self-directed'?'Keine manuelle Produktprüfung zur Fortsetzung angefordert.':'Alle verfügbaren Produktdateien sind geprüft.'));
 
@@ -743,7 +760,7 @@ function taskPanel(t){
 
  }else{
 
-  if(t.reason)panel.append(el('p','Warum offen: '+t.reason));
+  if(t.reason)panel.append(el('p','Warum offen: '+(t.retryMaxCostRappen===0&&/Kosten können noch reserviert/.test(t.reason)?'Dienstlauf fehlgeschlagen; für diesen kostenlosen Adapter ist keine Geldreservierung offen.':t.reason)));
 
   if(t.context){const background=el('details');background.append(el('summary','Worum geht es? Hintergrund ansehen'),el('p',t.context));panel.append(background);}
 
@@ -761,7 +778,7 @@ function taskPanel(t){
 
    
 
-  }else panel.append(el('p',t.status==='queued'?'Wartet auf einen freien Bearbeiter oder auf Vorarbeiten. Du musst aktuell nichts bestätigen.':t.status==='verifying'?'numaron prüft das Ergebnis automatisch. Es erscheint danach unter Ergebnisse.':'numaron bearbeitet diese Aufgabe. Das fertige Ergebnis erscheint unter Ergebnisse.'));
+  }else panel.append(el('p',t.status==='queued'?taskWaitText(t):t.status==='verifying'?'numaron prüft das Ergebnis automatisch. Es erscheint danach unter Ergebnisse.':'numaron bearbeitet diese Aufgabe. Das fertige Ergebnis erscheint unter Ergebnisse.'));
 
   if(['queued','blocked','failed'].includes(t.status)&&snapshot.autonomy?.status!=='running'&&snapshot.autonomy?.autonomyContract?.mode!=='self-directed'){panel.append(el('p','Der Betrieb ist pausiert oder gestoppt. Wartende Aufgaben werden erst nach dem Fortsetzen bearbeitet.'));const resume=el('button','Betrieb fortsetzen');resume.onclick=async()=>{resume.disabled=true;try{const a=snapshot.autonomy;await api('/api/control',{action:a.status==='paused'?'resume':'start',revision:a.revision});await refresh();}catch(e){$('error').textContent=e.message;resume.disabled=false;}};panel.append(resume);}
 
@@ -961,13 +978,13 @@ function invoicePaymentForm(invoice,date){
 
   else{input.type=type;if(type==='text'){input.inputMode='decimal';input.placeholder='z. B. 73.92';input.value=payment?(payment[key]/100).toFixed(2):'';}else input.value=payment?.day??invoice.observedDay;input.defaultValue=input.value;}
 
-  input.defaultValue=input.value;inputs[key]=input;wrap.append(input);form.append(wrap);
+  rememberDraft(input);inputs[key]=input;wrap.append(input);form.append(wrap);
 
  }
 
  const save=el('button','CHF-Zahlung bestätigen');save.type='submit';form.append(save);
 
- form.onsubmit=async event=>{event.preventDefault();const values={};for(const key of ['amount','numaronAmount']){const value=inputs[key].value.trim().replace(',','.');if(!/^\d+(\.\d{1,2})?$/.test(value)){$('error').textContent='CHF-Beträge mit höchstens zwei Nachkommastellen eingeben.';return;}values[key]=Math.round(Number(value)*100);}if(values.amount<=0||values.numaronAmount>values.amount){$('error').textContent='numaron-Anteil darf den bezahlten Gesamtbetrag nicht überschreiten.';return;}save.disabled=true;try{await api('/api/cost-import',{action:'payment',reference:invoice.reference,...values,day:inputs.day.value,nature:inputs.nature.value});for(const input of Object.values(inputs)){input.defaultValue=input.value;delete input.dataset.draft;}await refresh();}catch(e){$('error').textContent='CHF-Zahlung nicht gespeichert. '+e.message;save.disabled=false;}};
+ form.onsubmit=async event=>{event.preventDefault();const values={};for(const key of ['amount','numaronAmount']){const value=inputs[key].value.trim().replace(',','.');if(!/^\d+(\.\d{1,2})?$/.test(value)){$('error').textContent='CHF-Beträge mit höchstens zwei Nachkommastellen eingeben.';return;}values[key]=Math.round(Number(value)*100);}if(values.amount<=0||values.numaronAmount>values.amount){$('error').textContent='numaron-Anteil darf den bezahlten Gesamtbetrag nicht überschreiten.';return;}save.disabled=true;try{await api('/api/cost-import',{action:'payment',reference:invoice.reference,...values,day:inputs.day.value,nature:inputs.nature.value});for(const input of Object.values(inputs)){rememberDraft(input);delete input.dataset.draft;}await refresh();}catch(e){$('error').textContent='CHF-Zahlung nicht gespeichert. '+e.message;save.disabled=false;}};
 
  details.append(form);return details;
 

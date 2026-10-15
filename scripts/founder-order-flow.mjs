@@ -1,0 +1,28 @@
+import path from 'node:path';import {createHash} from 'node:crypto';import {createOrderGithub} from './founder-order-github.mjs';import {createCodeSandbox} from './founder-code-sandbox.mjs';import {createOrderCodeWorker,applyCodeChanges,verifyOrderCode} from './founder-order-code.mjs';
+ const key=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex').slice(0,32);
+export function createOrderFlow({directory,github=createOrderGithub({directory:path.join(directory,'github')}),sandbox=createCodeSandbox(),code,apiKey,getApiKey,mission,onSubmitted=()=>{}}){
+ code??=createOrderCodeWorker({apiKey,getApiKey,mission});let authenticated=null,lastRefresh=0;const reason=()=>!sandbox.available?(sandbox.reason??'Offline-Isolation nicht verfügbar; keine Codeausführung oder Einreichung.'):authenticated===null?'GitHub-Zugang seit Dienststart noch nicht geprüft.':!authenticated?'Eigener GitHub-Zugang für tricebr fehlt.':null;
+ const free=(execute,verify,isolated=true)=>({maxCostRappen:0,retrySafe:true,autoRetrySafe:true,reconcileSafe:true,get available(){return authenticated===true&&(!isolated||sandbox.available);},get reason(){return reason();},execute,verify});
+ const coding=Object.defineProperties({},Object.getOwnPropertyDescriptors(code));Object.defineProperty(coding,'available',{get:()=>authenticated===true&&sandbox.available&&code.available!==false,configurable:true});Object.defineProperty(coding,'reason',{get:()=>reason()??code.reason,configurable:true});
+ const adapters={
+ 'order-discovery':free(async ctx=>({kind:'order-discovery',opportunities:await github.discover(ctx)}),r=>Array.isArray(r?.opportunities),false),
+ 'order-prepare':free(async ctx=>{const p=await github.prepare(ctx.task.input.repo,ctx.task.input.number,ctx);const baseline=await sandbox.run(p.files,ctx);return {kind:'order-prepare',prepared:p,baseline,eligible:baseline.passed,sources:[{id:'order-'+p.id,url:p.url,claim:String(p.issueBody??p.title??'').slice(0,1000),observedAt:p.observedAt??new Date().toISOString()}]};},r=>typeof r?.eligible==='boolean'&&!!r.prepared),
+ 'order-code':coding,
+ 'order-check':free(async ctx=>{const r=ctx.dependencies.find(r=>r.kind==='order-code');if(!r)throw Error('Code missing');const validation=await verifyOrderCode(r,sandbox,ctx);if(validation.passed)github.certify(r.prepared,applyCodeChanges(r.prepared,r.analysis.changes),validation);return {kind:'order-check',prepared:r.prepared,analysis:r.analysis,sources:r.sources,validation};},r=>typeof r?.validation?.passed==='boolean'),
+ 'order-submit':free(async ctx=>{const r=ctx.dependencies.find(r=>r.kind==='order-check');if(!r?.validation.passed)throw Error('Validation required');let submission=await github.publish(r.prepared.id,ctx);if(submission.pending)submission=await github.publish(r.prepared.id,ctx);return {kind:'order-submit',prepared:r.prepared,submission};},r=>typeof r?.submission?.url==='string'||r?.submission?.invalidated===true)
+ };
+ return {adapters,probeIsolation:()=>sandbox.probe(),
+ async refresh({isEnabled=()=>true}={}){if(!isEnabled())return;await sandbox.refresh();if(!isEnabled())return;if(Date.now()-lastRefresh>60000){lastRefresh=Date.now();try{authenticated=(await github.read('/user')).login==='tricebr';}catch{authenticated=false;}}},
+ status:()=>({platform:'github',scope:'Public explicitly AI-welcoming bounties; dependency-free JavaScript; draft pull requests',authenticated,isolated:sandbox.available,isolation:sandbox.diagnostic??null,reason:reason(),orders:github.snapshot()}),
+ advance(controller){const s=controller.snapshot();if(s.status!=='running'||!s.budget.active)return;const history=controller.planningHistory();const enqueue=(id,kind,rootTaskId,input,dependencies)=>{if(!controller.hasTask(id))controller.enqueue({id,kind,rootTaskId,input,dependencies,resources:kind==='order-submit'?['github-publication']:[]});};
+ if(authenticated){const bucket=Math.floor(Date.now()/21600000),id='order-discovery-'+bucket;enqueue(id,'order-discovery',id,{title:'Offene ausdrücklich geeignete GitHub-Bounties selbst finden'},[]);}
+ for(const t of history.filter(t=>t.status==='done'&&t.kind.startsWith('order-'))){if(!['order-discovery','order-prepare','order-code','order-check','order-submit'].includes(t.kind))continue;const r=controller.result(t.id),attempt=t.input.attempt??1,version=t.input.version??1,revision=r.prepared?.id??t.rootTaskId;
+ if(t.kind==='order-discovery')for(const o of r.opportunities){const root='order-'+key([o.repo,o.number]);enqueue('prepare-'+root+'-1','order-prepare',root,{...o,title:'Quelle und vorhandene Tests prüfen',attempt:1,version:1},[]);}
+ if(t.kind==='order-prepare'&&r.eligible&&coding.available)enqueue('code-'+revision+'-1','order-code',t.rootTaskId,{title:'Konkreten Fehler beheben und neue Regression ergänzen',attempt:1,version},[t.id]);
+ if(t.kind==='order-code')enqueue('check-'+revision+'-'+attempt,'order-check',t.rootTaskId,{title:'Original und Änderung offline prüfen',attempt,version},[t.id]);
+ if(t.kind==='order-check'){if(r.validation.passed)enqueue('submit-'+revision,'order-submit',t.rootTaskId,{title:'Geprüfte Änderung einmalig als Draft-PR einreichen',version},[t.id]);else if(attempt<3&&coding.available)enqueue('code-'+revision+'-'+(attempt+1),'order-code',t.rootTaskId,{title:'Offline-Testfehler gezielt beheben; vorhandene Tests erhalten',attempt:attempt+1,version},[t.id]);}
+ if(t.kind==='order-submit'){if(r.submission?.url)onSubmitted(r);else if(r.submission?.invalidated&&version<3)enqueue('prepare-'+t.rootTaskId+'-'+(version+1),'order-prepare',t.rootTaskId,{repo:r.prepared.repo,number:r.prepared.number,title:'Geänderten Auftrag neu vorbereiten und prüfen',attempt:1,version:version+1},[]);}
+ }
+ },close(){github.close();}
+ };
+}

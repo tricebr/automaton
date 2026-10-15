@@ -22,7 +22,11 @@ test('progress distinguishes user review from automatic checks and never marks f
  assert.equal(taskProgress({source:'own',status:'done'}).labels[3],'Fertig');
  assert.equal(taskProgress({status:'failed'}).current,1);
 });
-import {draftChanged} from '../web/founder/interaction.mjs';
+import {draftChanged,rememberDraft} from '../web/founder/interaction.mjs';
+test('saved prepaid selection uses its explicit baseline and preserves later user edits',()=>{
+ const input={tagName:'SELECT',value:'prepaid',defaultValue:'prepaid',options:[{value:'service'},{value:'prepaid'}]};
+ rememberDraft(input);assert.equal(draftChanged(input),false);input.value='service';assert.equal(draftChanged(input),true);
+});
 
 test('unchanged selects do not block refresh while actual selection edits stay protected',()=>{
  const options=[{value:'first',defaultSelected:false},{value:'second',defaultSelected:false}];
