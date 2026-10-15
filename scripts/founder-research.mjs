@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {openOnline} from '../src/online/workspace.ts';
+import {researchSchedule} from '../src/online/scheduler.ts';
+import {improvementResearchSchedule} from '../src/revenue/proactive-research.ts';
 export function createFounderResearch({directory,request}) {
  const file=path.join(directory,'research.db');
  const online=openOnline(fs.existsSync(file)?{resume:file,request}:{directory,request});
  online.runtime.configureAutonomy(true);
  let interruptedJob=null;
  return {available:true,maxCostRappen:0,retrySafe:true,
+  get nextReadyAt(){if(interruptedJob!==null)return 0;const primary=researchSchedule(online.database.raw),s=primary.reason==='cooldown_or_review'?improvementResearchSchedule(online.database.raw):primary;return s.topic||s.reason==='queued_work'?0:Date.now()+60000;},
   async execute({signal,assertActive}) {
    assertActive();if(signal.aborted)throw Error('Stopped');
    const runtime=online.runtime;

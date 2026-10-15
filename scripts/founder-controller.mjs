@@ -67,8 +67,11 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
    if(a?.retrySafe&&a.maxCostRappen===0)update(row.id,'queued');
   }
   const capacityBudget=budget.snapshot();
-  if(capacityBudget.active)for(const row of db.prepare("SELECT id,payload FROM founder_jobs WHERE status='blocked' AND reason='Budget daily limit' AND attempts<3").all()){
-   const a=adapters[JSON.parse(row.payload).kind];if(a&&a.available!==false&&a.maxCostRappen<=Math.min(capacityBudget.remainingRappen,capacityBudget.dayRemainingRappen))update(row.id,'queued');
+  if(capacityBudget.active)for(const row of db.prepare("SELECT id,payload,reason FROM founder_jobs WHERE status='blocked' AND reason IN ('Budget daily limit','Budget task limit') AND attempts<3").all()){
+   const task=JSON.parse(row.payload),a=adapters[task.kind];
+   const rootUsed=(capacityBudget.entries??[]).filter(e=>e.taskId===task.rootTaskId).reduce((n,e)=>n+(e.actualCostRappen??e.maxCostRappen),0);
+   const rootReady=row.reason!=='Budget task limit'||capacityBudget.entriesComplete!==false&&Number.isSafeInteger(capacityBudget.taskRappen)&&rootUsed+(a?.maxCostRappen??Infinity)<=capacityBudget.taskRappen;
+   if(rootReady&&a&&a.available!==false&&a.maxCostRappen<=Math.min(capacityBudget.remainingRappen,capacityBudget.dayRemainingRappen))update(row.id,'queued');
   }
   const running=db.prepare("SELECT payload FROM founder_jobs WHERE status IN ('running','verifying')").all();let capacity=maxWorkers-running.length;
   const locked=new Set(running.flatMap(r=>JSON.parse(r.payload).resources));const claimed=[];
@@ -90,7 +93,7 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
   const assertActive=()=>{const s=state();if(closing||abort.signal.aborted||!['running','paused'].includes(s.status)||s.generation!==generation)throw Error('Execution stopped');};
   const watcher=setInterval(()=>{try{assertActive();}catch{abort.abort();}},100);
   const timeout=setTimeout(()=>abort.abort(),120000);
-  let dispatched=false,diagnostic={code:'preflight',requestRevision:adapter.requestRevision??null,accessRevision:adapter.accessRevision??null},settled=false,returned=false;
+  let dispatched=false,diagnostic={code:'preflight',requestRevision:adapter.requestRevision??null,accessRevision:adapter.accessRevision??null},settled=false,returned=false,responseIncomplete=false;
   if(adapter.providerTracked)db.prepare("INSERT INTO founder_attempts VALUES(?,?,'prepared',?,NULL,NULL,?)").run(runId,task.id,JSON.stringify(diagnostic),Date.now());
   const recordProviderEvent=e=>{
    if(!adapter.providerTracked)return;
@@ -102,7 +105,7 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
    if(e.costReceipt){budget.settle({id:runId,...e.costReceipt});settled=true;}
   };
   try{
-   assertActive();const result=await adapter.execute({task,signal:abort.signal,assertActive,recordProviderEvent,grant:{reservationId:runId,maxCostRappen:adapter.maxCostRappen},dependencies:task.dependencies.map(id=>api.result(id))});returned=true;
+   assertActive();const result=await adapter.execute({task,signal:abort.signal,assertActive,recordProviderEvent,grant:{reservationId:runId,maxCostRappen:adapter.maxCostRappen},dependencies:task.dependencies.map(id=>api.result(id))});returned=true;responseIncomplete=result?.status==='incomplete';
    if(adapter.providerTracked){const payload=JSON.stringify(result);if(Buffer.byteLength(payload)<=262144)db.prepare('UPDATE founder_attempts SET result=?,receipt=COALESCE(?,receipt),at_ms=? WHERE run_id=?').run(payload,result?.costReceipt?JSON.stringify(result.costReceipt):null,Date.now(),runId);}
    // Account for actual provider response even if the operator stopped during the call.
    if(adapter.maxCostRappen===0)budget.settle({id:runId,actualCostRappen:0,evidenceRef:`local:${runId}`});
@@ -115,12 +118,12 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
    if(adapter.maxCostRappen===0){budget.settle({id:runId,actualCostRappen:0,evidenceRef:`local:${runId}`});settled=true;const code=['service_unauthorized','service_rate_limited','service_read_failed'].includes(error?.diagnostic?.code)?error.diagnostic.code:'local_read_failed';diagnostic={code,...(Number.isInteger(error?.diagnostic?.httpStatus)?{httpStatus:error.diagnostic.httpStatus}:{})};db.prepare("INSERT OR REPLACE INTO founder_attempts VALUES(?,?,'failed',?,?,NULL,?)").run(runId,task.id,JSON.stringify(diagnostic),JSON.stringify({actualCostRappen:0,evidenceRef:`local:${runId}`}),Date.now());}
    if(adapter.providerTracked){
     if(!dispatched&&!settled){budget.settle({id:runId,actualCostRappen:0,evidenceRef:`preflight:${runId}`});settled=true;}
-    diagnostic={...diagnostic,code:diagnostic.code==='invalid_request_error'||diagnostic.code==='rejected'||diagnostic.code==='rate_limit_exceeded'||diagnostic.code==='insufficient_quota'||diagnostic.code==='invalid_api_key'||diagnostic.code==='provider_http_error'||diagnostic.code==='model_not_found'?diagnostic.code:returned?'verification_failed':!dispatched?'preflight_failed':settled?'response_processing_failed':'provider_outcome_unknown'};
+    diagnostic={...diagnostic,code:responseIncomplete?'response_incomplete':diagnostic.code==='invalid_request_error'||diagnostic.code==='rejected'||diagnostic.code==='rate_limit_exceeded'||diagnostic.code==='insufficient_quota'||diagnostic.code==='invalid_api_key'||diagnostic.code==='provider_http_error'||diagnostic.code==='model_not_found'?diagnostic.code:returned?'verification_failed':!dispatched?'preflight_failed':settled?'response_processing_failed':'provider_outcome_unknown'};
     db.prepare('UPDATE founder_attempts SET diagnostic=?,at_ms=? WHERE run_id=?').run(JSON.stringify(diagnostic),Date.now(),runId);
    }
    const retryable=(abort.signal.aborted||adapter.reconcileSafe===true)&&adapter.retrySafe===true&&adapter.maxCostRappen===0;
-   const auto=adapter.autoRetrySafe===true&&settled&&(returned||diagnostic.retryable===true||adapter.maxCostRappen===0)&&!closing&&!abort.signal.aborted;
-   update(task.id,(abort.signal.aborted||retryable)?'blocked':'failed',auto?(adapter.maxCostRappen===0?'Dienstabruf fehlgeschlagen; keine Kostenreservierung. Wiederholung nach Abrufpause.':'Vorübergehender Modellfehler; automatische Wiederholung mit Kostenprüfung.'):retryable?'Lesender Lauf unterbrochen; Fortsetzen erlaubt höchstens drei Versuche.':abort.signal.aborted?'Bearbeitung unterbrochen; keine automatische Wiederholung.':adapter.maxCostRappen===0?'Dienstabruf fehlgeschlagen; keine Kostenreservierung.':settled?'Bearbeitung oder Ergebnisprüfung fehlgeschlagen; Kosten abgeglichen.':'Bearbeitung fehlgeschlagen; Anbieterausgang und Kosten noch ungeklärt.');
+   const auto=!responseIncomplete&&adapter.autoRetrySafe===true&&settled&&(returned||diagnostic.retryable===true||adapter.maxCostRappen===0)&&!closing&&!abort.signal.aborted;
+   update(task.id,(abort.signal.aborted||retryable)?'blocked':'failed',responseIncomplete?'Antwort unvollständig (Ausgabegrenze oder Inhaltsfilter); Kosten abgeglichen. Kein automatischer identischer Neuversuch.':auto?(adapter.maxCostRappen===0?'Dienstabruf fehlgeschlagen; keine Kostenreservierung. Wiederholung nach Abrufpause.':'Vorübergehender Modellfehler; automatische Wiederholung mit Kostenprüfung.'):retryable?'Lesender Lauf unterbrochen; Fortsetzen erlaubt höchstens drei Versuche.':abort.signal.aborted?'Bearbeitung unterbrochen; keine automatische Wiederholung.':adapter.maxCostRappen===0?'Dienstabruf fehlgeschlagen; keine Kostenreservierung.':settled?'Bearbeitung oder Ergebnisprüfung fehlgeschlagen; Kosten abgeglichen.':'Bearbeitung fehlgeschlagen; Anbieterausgang und Kosten noch ungeklärt.');
    if(returned&&settled&&adapter.providerTracked&&(closing||abort.signal.aborted))update(task.id,'blocked','Gespeichertes Ergebnis wird automatisch erneut geprüft.');
    const attempts=db.prepare('SELECT attempts FROM founder_jobs WHERE id=?').get(task.id).attempts;
    db.prepare('UPDATE founder_jobs SET retryable=?,next_retry_ms=? WHERE id=?').run(Number(retryable),auto&&attempts<3?Date.now()+Math.max(diagnostic.retryAfterMs??0,60000*2**(attempts-1)):null,task.id);
@@ -165,6 +168,15 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
   }).immediate,
   tick(){if(closing)return Promise.resolve([]);const p=(async()=>{await recoverResults();const jobs=claim.immediate();const promises=jobs.map(job=>{const p=execute(job);const a=active.get(job.task.id);if(a)a.promise=p;return p;});return Promise.allSettled(promises);})();ticks.add(p);p.then(()=>ticks.delete(p),()=>ticks.delete(p));return p;},
   snapshot,
+  archive(input={}){
+   const {cursor=null,limit=25}=input;
+   if(Object.keys(input).some(k=>!['cursor','limit'].includes(k))||!Number.isInteger(limit)||limit<1||limit>50||cursor!==null&&(typeof cursor!=='string'||!/^\d{1,16}:[a-zA-Z0-9_-]{1,100}$/.test(cursor)))throw Error('Invalid archive page');
+   const parts=cursor?.split(':'),at=parts?Number(parts[0]):null,id=parts?.[1];if(at!==null&&!Number.isSafeInteger(at))throw Error('Invalid archive cursor');
+   const rows=at===null?db.prepare("SELECT id,payload,result,digest,updated_ms FROM founder_jobs WHERE status='done' ORDER BY updated_ms DESC,id DESC LIMIT ?").all(limit+1):db.prepare("SELECT id,payload,result,digest,updated_ms FROM founder_jobs WHERE status='done' AND (updated_ms<? OR (updated_ms=? AND id<?)) ORDER BY updated_ms DESC,id DESC LIMIT ?").all(at,at,id,limit+1);
+   const page=rows.slice(0,limit);for(const row of page)if(!row.result||hash(row.result)!==row.digest)throw Error('Archive result integrity check failed');
+   const items=page.map(r=>{const p=JSON.parse(r.payload);return {id:r.id,kind:p.kind,input:{title:p.input?.title??p.kind},status:'done',updated_ms:r.updated_ms,digest:r.digest,source:'autonomy'};});
+   const last=page.at(-1);return {items,total:db.prepare("SELECT count(*) n FROM founder_jobs WHERE status='done'").get().n,nextCursor:rows.length>limit?`${last.updated_ms}:${last.id}`:null};
+  },
   planningHistory(){return db.prepare('SELECT id,payload,status,updated_ms FROM founder_jobs ORDER BY created_ms DESC,id LIMIT 5000').all().map(r=>({...r,...JSON.parse(r.payload),payload:undefined}));},
   hasTask(id){if(!validId(id))throw Error('Invalid task');return !!db.prepare('SELECT 1 FROM founder_jobs WHERE id=?').get(id);},
   retry:db.transaction((id,updatedMs)=>{if(!validId(id)||!Number.isSafeInteger(updatedMs))throw Error('Invalid retry');const row=db.prepare('SELECT * FROM founder_jobs WHERE id=?').get(id);if(!row||row.updated_ms!==updatedMs||!retryAllowed(row))throw Error('Retry unavailable');update(id,'queued');return snapshot();}).immediate,

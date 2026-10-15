@@ -2,7 +2,7 @@ import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs'
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
 import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck, runtimeHealth, capabilityStatus, taskWaitText, codeCapability} from './model.mjs';
 
-import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,rememberDraft,explainTerm} from './interaction.mjs';
+import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,rememberDraft,explainTerm,renderFounderArchive} from './interaction.mjs';
 
 import {renderTradingEngine,renderTradeHighlight} from './trading.mjs';
 
@@ -15,6 +15,13 @@ let financialPeriod='today';
 let radarDisplayed=null;
 
 let snapshot,csrf='',filter='Alle',busy=false;
+let archiveState={items:[],total:null,nextCursor:null,loading:false,loaded:false,error:null};
+async function loadArchive(more=false){
+ if(archiveState.loading)return;archiveState.loading=true;archiveState.error=null;renderArchive();
+ try{const cursor=more?archiveState.nextCursor:null;const r=await api('/api/archive?limit=25'+(cursor?'&cursor='+encodeURIComponent(cursor):''));const page=r.archive;if(!page||!Array.isArray(page.items)||!Number.isSafeInteger(page.total))throw Error('Ungültige Archivantwort.');const previous=more?archiveState.items:[];archiveState.items=[...new Map([...previous,...page.items].map(t=>[t.id,t])).values()];archiveState.total=page.total;archiveState.nextCursor=page.nextCursor;csrf=r.csrf;}catch{archiveState.error='Archiv derzeit nicht erreichbar. Ist die Erweiterung gerade vorbereitet worden, wird sie beim nächsten erlaubten Dienstneustart verfügbar. Der laufende Betrieb bleibt unverändert.';}finally{archiveState.loading=false;archiveState.loaded=true;renderArchive();}
+}
+function renderArchive(){renderFounderArchive($('archive'),archiveState,{open:openJob,more:()=>loadArchive(true),refresh:()=>loadArchive(false)});}
+
 let latestPower,powerBusy=false,powerChanging=false;
 function renderPower(){
  const box=$('powerControls');if(!box)return;
@@ -228,7 +235,7 @@ function renderAutonomy(){
 
  const labels={queued:'Wartet',running:'In Arbeit',verifying:'Ergebnisprüfung',done:'Ergebnis gespeichert',blocked:'Blockiert',failed:'Prüfung fehlgeschlagen',cancelled:'Abgebrochen'};
 
- for(const t of a.tasks){if(t.status==='done')box.append(resultPanel({...t,source:'autonomy'}));else box.append(taskPanel({...t,source:'autonomy'}));}
+ for(const t of a.tasks.filter(t=>!['done','cancelled'].includes(t.status)))box.append(taskPanel({...t,source:'autonomy'}));
 
  if(!a.tasks.length)box.append(el('p','Die Arbeitsauswahl beginnt bei laufendem Controller und aktivem Budget.'));
 
@@ -552,7 +559,7 @@ function renderOperations(){
 
  let budget=$('budgetStatus');if(!budget){budget=el('div',undefined,'notice');budget.id='budgetStatus';$('finance').prepend(budget);}
 
- budget.replaceChildren(el('h2','Kostenkontrolle'),el('strong','Kostenpflichtige Ausführung: gesperrt'),el('p','Dokumentierte Tagesobergrenze: CHF 7.50 · hier freigegeben: CHF 0.00'),el('p',ops.budget.scope));
+ budget.replaceChildren(el('h2','Kostenkontrolle'),el('strong','Kostenpflichtige Ausführung: gesperrt'),el('p','Für manuelle Notizen freigegeben: CHF 0.00. Die aktiven technischen Ausgabenlimits stehen unter Aufgaben.'),el('p',ops.budget.scope));
 
  const research=$('research');research.replaceChildren(el('h2','Aufträge & Betriebsberichte'));
 
@@ -618,13 +625,14 @@ function renderUsage(report){
 
 
 
-const views={trading:['trading'],work:['work'],checks:['checks'],overview:['aiHud','startTrading','longHistory','overview','nextAction','missionDeck','control','usage'],operations:['operations','autonomousWork','research'],products:['products'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
+const views={trading:['trading'],work:['work'],checks:['checks'],overview:['aiHud','startTrading','longHistory','overview','nextAction','missionDeck','control','usage'],operations:['operations','autonomousWork','research'],products:['products'],archive:['archive'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
 
 function applyView(){
 
  const requested=location.hash.slice(1),view=Object.hasOwn(views,requested)?requested:'overview';
- const rooms={overview:'01 / Brücke',operations:'02 / Missionszentrale',work:'02 / Missionszentrale',products:'03 / Fracht & Ergebnisse',finance:'04 / Ressourcen',trading:'04 / Markt-Radar',approvals:'05 / Kontrollstation',checks:'05 / Kontrollstation'};if($('deckLocation'))$('deckLocation').textContent=rooms[view]??rooms.overview;document.body.dataset.deck=view;
+ const rooms={overview:'01 / Brücke',operations:'02 / Missionszentrale',work:'02 / Missionszentrale',products:'03 / Fracht & Ergebnisse',archive:'06 / Missionsarchiv',finance:'04 / Ressourcen',trading:'04 / Markt-Radar',approvals:'05 / Kontrollstation',checks:'05 / Kontrollstation'};if($('deckLocation'))$('deckLocation').textContent=rooms[view]??rooms.overview;document.body.dataset.deck=view;
 
+ if(view==='archive'&&!archiveState.loaded&&!archiveState.loading)void loadArchive();
  if(view==='trading')$('accountDetails').open=true;
 
  const ids=new Set(Object.values(views).flat());

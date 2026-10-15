@@ -39,3 +39,13 @@ export function taskProgress(task){
 }
 
 export function rememberDraft(input){if(input.tagName==='SELECT'){for(const option of input.options)option.defaultSelected=option.value===input.value;}else input.defaultValue=input.value;}
+export function renderFounderArchive(box,state,actions){
+ if(!box)return;const el=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n;};box.replaceChildren();
+ box.append(el('div','MISSIONSARCHIV'),el('h2','Abgeschlossene Arbeiten'),el('p','Technisch abgeschlossene Aufgaben mit gespeicherten Ergebnissen aus der dauerhaften Ablage. Der Aufgabenabschluss ist keine Kundenabnahme und kein Zahlungsnachweis. Originale und Prüfverlauf bleiben erhalten.'));
+ if(state.total!==null)box.append(el('strong',state.total+' abgeschlossene Arbeiten · '+state.items.length+' angezeigt'));
+ if(state.loading)box.append(el('p','Archiv wird geladen …'));if(state.error)box.append(el('p',state.error));
+ const refresh=el('button','Archiv aktualisieren');refresh.disabled=state.loading;refresh.onclick=actions.refresh;box.append(refresh);
+ for(const item of state.items){const card=el('article','');card.className='notice';card.append(el('h3',item.input?.title??item.kind),el('small',new Date(item.updated_ms).toLocaleString('de-CH',{timeZone:'Europe/Zurich'})));const open=el('button','Ergebnis öffnen');open.onclick=()=>actions.open(item);card.append(open);box.append(card);}
+ if(state.total===0&&!state.error)box.append(el('p','Noch keine abgeschlossenen Arbeiten vorhanden.'));
+ if(state.nextCursor){const more=el('button','Weitere laden');more.disabled=state.loading;more.onclick=actions.more;box.append(more);}
+}

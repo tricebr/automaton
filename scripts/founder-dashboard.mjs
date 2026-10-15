@@ -105,7 +105,7 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
  const bootstrap=randomBytes(32).toString('hex'),session=randomBytes(32).toString('hex'),csrf=randomBytes(32).toString('hex');
 
- let redeemed=false,origin='';const expires=Date.now()+8*60*60*1000;
+ let redeemed=false,origin='',cookieName='';const expires=Date.now()+8*60*60*1000;
 
  const assets=new Map([['/fonts/Manrope-Variable.ttf',['fonts/Manrope-Variable.ttf','font/ttf']],['/', ['index.html','text/html; charset=utf-8']],['/app.js',['app.js','text/javascript; charset=utf-8']],['/model.mjs',['model.mjs','text/javascript; charset=utf-8']],['/interaction.mjs',['interaction.mjs','text/javascript; charset=utf-8']],['/trading.mjs',['trading.mjs','text/javascript; charset=utf-8']],['/long-history.mjs',['long-history.mjs','text/javascript; charset=utf-8']],['/finance-refresh.mjs',['finance-refresh.mjs','text/javascript; charset=utf-8']],['/style.css',['style.css','text/css; charset=utf-8']]]);
 
@@ -142,11 +142,11 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
     if(redeemed||!equal(body?.token,bootstrap)){json(403,{error:'Anmeldung erforderlich.'});return;}
 
-    redeemed=true;res.setHeader('Set-Cookie',`obolus_founder=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`);json(200,{csrf});return;
+    redeemed=true;res.setHeader('Set-Cookie',`${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`);json(200,{csrf});return;
 
    }
 
-   const cookie=(req.headers.cookie??'').split(';').map(x=>x.trim()).find(x=>x.startsWith('obolus_founder='))?.slice(15);
+   const cookie=(req.headers.cookie??'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='))?.slice(cookieName.length+1);
 
    if(!equal(cookie,session)){json(401,{error:'Bitte über den persönlichen Startlink öffnen.'});return;}
 
@@ -169,11 +169,16 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
    if(autonomy&&req.method==='POST'&&req.url==='/api/job/retry'&&equal(req.headers['x-obolus-csrf'],csrf)){json(200,{autonomy:autonomy.retry(body),csrf});return;}
 
+   if(autonomy&&req.method==='GET'&&req.url.split('?')[0]==='/api/archive'){
+    const query=new URL(req.url,'http://localhost').searchParams;
+    if([...query.keys()].some(k=>!['limit','cursor'].includes(k))||query.getAll('limit').length>1||query.getAll('cursor').length>1){json(400,{error:'Ungültige Archivabfrage.'});return;}
+    json(200,{archive:autonomy.archive({limit:query.has('limit')?Number(query.get('limit')):25,cursor:query.get('cursor')}),csrf});return;
+   }
    if(autonomy&&req.method==='GET'&&req.url==='/api/capabilities'){json(200,autonomy.snapshot().capabilities);return;}
 
    if(autonomy&&req.method==='GET'&&/^\/api\/results\/[a-zA-Z0-9_-]{1,100}$/.test(req.url)){json(200,autonomy.result(req.url.slice(13)));return;}
 
-   if(longHistory&&req.method==='GET'&&req.url==='/api/long-history/snapshot'){json(200,{longHistory:longHistory.snapshot(),csrf});return;}
+   if(longHistory&&req.method==='GET'&&req.url==='/api/long-history/snapshot'){json(200,{longHistory:longHistory.snapshot(),marketContext:tradingEngine?.contextSnapshot?.()??null,csrf});return;}
    if(longHistory&&req.method==='GET'&&req.url==='/api/long-history/lessons'){json(200,longHistory.lessons());return;}
    if(longHistory&&req.method==='GET'&&/^\/api\/long-history\/reports\/[a-zA-Z0-9_-]{1,100}$/.test(req.url)){json(200,longHistory.report(req.url.slice('/api/long-history/reports/'.length)));return;}
    if(longHistory&&req.method==='POST'&&req.url==='/api/long-history/control'&&equal(req.headers['x-obolus-csrf'],csrf)){
@@ -203,7 +208,7 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
  server.requestTimeout=5000;server.headersTimeout=5000;
 
- await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});origin=`http://127.0.0.1:${server.address().port}`;
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});origin=`http://127.0.0.1:${server.address().port}`;cookieName='numaron_founder_'+server.address().port;
 
  return {url:origin,loginUrl:`${origin}/#${bootstrap}`,close:()=>new Promise(resolve=>{server.close(resolve);server.closeIdleConnections();})};
 

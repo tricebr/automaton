@@ -1,6 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {openFounderController} from './founder-controller.mjs';import {openFounderBudget} from './founder-budget.mjs';
 import Database from 'better-sqlite3';
+test('task-budget deferral resumes after the authorized root ceiling increases without resetting costs',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'task-budget-change-'));let raised=false,calls=0;
+ const budget={snapshot:()=>({active:true,remainingRappen:1000,dayRemainingRappen:1000,taskRappen:raised?250:200,entriesComplete:true,entries:[{taskId:'root-limit',actualCostRappen:200,maxCostRappen:200}]}),reserve(){if(!raised)throw Error('Budget task limit');return {};},settle(){}};
+ const c=openFounderController({file:path.join(dir,'c.db'),budget,adapters:{read:{maxCostRappen:50,execute:async()=>{calls++;return {costReceipt:{actualCostRappen:1,evidenceRef:'fake'}};},verify:()=>true}}});
+ try{c.enqueue(task('root-limit'));c.control('start');await c.tick();assert.equal(c.snapshot().tasks[0].status,'blocked');assert.equal(calls,0);raised=true;await c.tick();assert.equal(calls,1);assert.equal(c.snapshot().tasks[0].status,'done');}finally{await c.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('dead worker recovery blocks uncertain execution and preserves outstanding cost',async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'recover-')),file=path.join(dir,'jobs.db'),budget=openFounderBudget(path.join(dir,'budget.db'));budget.activate({startAt:Date.now()-100,authorizationRef:'user'});let c;
  try{c=openFounderController({file,budget,adapters:{}});c.enqueue({id:'task',rootTaskId:'task',kind:'paid',input:{},dependencies:[],resources:[]});await c.close();c=null;budget.reserve({id:'orphan',rootTaskId:'task',maxCostRappen:50});const db=new Database(file);db.prepare("UPDATE founder_jobs SET status='running',owner_pid=99999999,lease_ms=?,run_id='orphan'").run(Date.now()+10000);db.close();c=openFounderController({file,budget,adapters:{paid:{maxCostRappen:50,execute(){throw Error('must not retry');}}}});assert.equal(c.snapshot().tasks[0].status,'blocked');assert.equal(budget.snapshot().heldRappen,50);c.control('start');await c.tick();assert.equal(c.snapshot().tasks[0].status,'blocked');}finally{await c?.close();budget.close();fs.rmSync(dir,{recursive:true,force:true});}
@@ -89,3 +95,9 @@ test('private paid manual retry requires settled costs, an active budget and exp
 test('daily-budget deferral resumes when capacity returns without retrying uncertain paid work',async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'daily-retry-'));let allowed=false,calls=0;const budget={snapshot:()=>({active:true,remainingRappen:1000,dayRemainingRappen:allowed?100:0,entries:[]}),reserve(){if(!allowed)throw Error('Budget daily limit');return {};},settle(){}};const c=openFounderController({file:path.join(dir,'c.db'),budget,adapters:{read:{maxCostRappen:50,execute:async()=>{calls++;return {costReceipt:{actualCostRappen:10,evidenceRef:'test'}};},verify:()=>true}}});try{c.enqueue(task('later'));c.control('start');await c.tick();assert.equal(c.snapshot().tasks[0].status,'blocked');assert.equal(calls,0);allowed=true;await c.tick();assert.equal(calls,1);assert.equal(c.snapshot().tasks[0].status,'done');}finally{await c.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('truncated paid responses keep settled costs and do not repeat an unchanged request',()=>fixture(async(make,budget)=>{
+ let calls=0;const c=make({read:{providerTracked:true,autoRetrySafe:true,manualRetrySafe:true,maxCostRappen:50,execute:async()=>{calls++;return {status:'incomplete',incompleteReason:'max_output_tokens',costReceipt:{actualCostRappen:12,evidenceRef:'partial'}};},verify:()=>false}});
+ c.enqueue(task('partial'));c.control('start');await c.tick();const row=c.snapshot().tasks[0];assert.equal(row.status,'failed');assert.equal(row.nextRetryAt,null);assert.equal(row.diagnostic.code,'response_incomplete');assert.match(row.reason,/Ausgabegrenze/);await c.tick();assert.equal(calls,1);assert.equal(budget.snapshot().spentRappen,12);assert.equal(budget.snapshot().heldRappen,0);
+}));

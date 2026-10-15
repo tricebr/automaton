@@ -41,10 +41,11 @@ export function readFounderReports(base,now=Date.now()){
  let orders={status:'unavailable'},domains={status:'unavailable'},paper={status:'unavailable'};
  try{const dirs=fs.readdirSync(path.join(base,'artifacts')).filter(n=>/^order-monitor-\d{8}-\d{4}$/.test(n)).sort().reverse();
   // Do not silently fall back to an older successful report if the latest is broken.
-  const source=`artifacts/${dirs[0]}/completion.json`,r=read(source),at=r.checked_at??r.at;
-  const normalized=normalizeOrderReport(r),rows=normalized.prs,valid=()=>true;
+  const source=`artifacts/${dirs[0]}/completion.json`,r=read(source),at=r.checked_at??r.at??r.checkedAt;
+  const summaryOnly=!Array.isArray(r.prs??r.pr_states)&&Number.isFinite(Date.parse(at))&&['tracked','newComments','stateChanges'].every(k=>Number.isSafeInteger(r.github?.[k])&&r.github[k]>=0);
+  const normalized=summaryOnly?{prs:[],failures:0}:normalizeOrderReport(r),rows=normalized.prs,valid=()=>true;
   const failedFetches=normalized.failures;
-  orders={status:freshness(at)==='stale'?'stale':failedFetches?'partial':'recent',at,source,failedFetches,changedComments:r.changedComments??null,payments:typeof r.payments==='string'?r.payments.slice(0,1500):'Abnahme, Vergütung und Zahlung nicht durch diesen Bericht bestätigt',prs:rows.filter(valid).map(p=>({repo:p.repo,number:p.n,state:p.state,merged:p.merged===true,error:p.error===true,url:`https://github.com/${p.repo}/pull/${p.n}`}))};
+  orders={status:freshness(at)==='stale'?'stale':failedFetches||summaryOnly?'partial':'recent',at,source,summaryOnly,failedFetches,changedComments:r.changedComments??null,payments:typeof r.payments==='string'?r.payments.slice(0,1500):'Abnahme, Vergütung und Zahlung nicht durch diesen Bericht bestätigt',prs:rows.filter(valid).map(p=>({repo:p.repo,number:p.n,state:p.state,merged:p.merged===true,error:p.error===true,url:`https://github.com/${p.repo}/pull/${p.n}`}))};
  }catch{}
  try{const r=read('sites/numaron/cloudflare-deployment-status.json');domains={status:freshness(r.checked_at),at:r.checked_at,remaining:Array.isArray(r.remaining)?r.remaining.filter(x=>typeof x==='string').map(x=>x.slice(0,500)):[],source:'sites/numaron/cloudflare-deployment-status.json'};}catch{}
  try{const r=read('artifacts/forward-paper-20261012/summary.json');const age=now-Date.parse(r.observedAt);paper={status:Number.isFinite(age)&&age>=-1000&&age<120000?r.status:'stale',at:r.observedAt,endsAt:r.endsAt,feedHealthy:r.feedHealthy===true,virtualPositions:r.openVirtualPositions,accounts:Array.isArray(r.accounts)?r.accounts.length:0,source:'artifacts/forward-paper-20261012/summary.json',liveAuthorized:false};}catch{}

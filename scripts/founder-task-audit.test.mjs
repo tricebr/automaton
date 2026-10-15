@@ -1,3 +1,4 @@
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
@@ -34,4 +35,28 @@ test('requires the personally started running session for writes',()=>{
 });
 test('accepts the controller local zero-cost receipt for a verified replacement',()=>{
  const f=fixture();try{f.add('old');f.add('new','done');f.budget.exec("UPDATE founder_reservations SET receipt='local:run-new' WHERE id='run-new'");assert.equal(auditFounderTasks({...f,power:{enabled:true},apply:true}).actions[0].action,'superseded-free-search');}finally{f.close();}
+});
+
+
+test('identifies stored truncated paid responses and cancels futile retry without changing costs or attempts',()=>{
+ const f=fixture();try{f.controller.exec('CREATE TABLE founder_attempts(run_id TEXT PRIMARY KEY,task_id TEXT,result TEXT,receipt TEXT,diagnostic TEXT,stage TEXT)');f.add('partial','failed','private-analysis',50,12,2);
+ const r={kind:'private-analysis',status:'incomplete',analysis:null,costReceipt:{actualCostRappen:12,evidenceRef:'free:partial'},costEvidence:{outputTokens:2000}};
+ f.controller.prepare('INSERT INTO founder_attempts VALUES(?,?,?,?,?,?)').run('run-partial','partial',JSON.stringify(r),JSON.stringify(r.costReceipt),'{}','receipt');f.controller.exec("UPDATE founder_jobs SET next_retry_ms=123 WHERE id='partial'");const before=f.budget.serialize();
+ const report=auditFounderTasks({...f,power:{enabled:true},apply:true});assert.equal(report.actions[0].action,'clarify-truncated-response');const j=f.controller.prepare("SELECT * FROM founder_jobs WHERE id='partial'").get();assert.match(j.reason,/Ausgabegrenze/);assert.equal(j.status,'failed');assert.equal(j.attempts,2);assert.equal(j.next_retry_ms,null);assert.deepEqual(f.budget.serialize(),before);assert.equal(auditFounderTasks({...f,power:{enabled:true},apply:true}).applied,0);
+ }finally{f.close();}
+});
+
+
+test('partial response annotation requires matching receipt and never clears an uncertain hold',()=>{
+ for(const mode of ['unknown','receipt-mismatch','complete']){const f=fixture();try{f.controller.exec('CREATE TABLE founder_attempts(run_id TEXT PRIMARY KEY,task_id TEXT,result TEXT,receipt TEXT,diagnostic TEXT,stage TEXT)');f.add('candidate','failed','private-analysis',50,mode==='unknown'?null:12,2);
+ const r={kind:'private-analysis',status:mode==='complete'?'completed':'incomplete',analysis:null,costEvidence:{outputTokens:2000}};
+ f.controller.prepare('INSERT INTO founder_attempts VALUES(?,?,?,?,?,?)').run('run-candidate','candidate',JSON.stringify(r),JSON.stringify({actualCostRappen:12,evidenceRef:mode==='receipt-mismatch'?'wrong':'free:candidate'}),'{}','receipt');const before=f.budget.serialize();const report=auditFounderTasks({...f,power:{enabled:true},apply:true});assert.equal(report.actions.some(x=>x.action==='clarify-truncated-response'),false);assert.deepEqual(f.budget.serialize(),before);
+ }finally{f.close();}}
+});
+
+
+test('recovers an actual local partial order report with provenance, never paid or uncertain work',()=>{
+ const base=fs.mkdtempSync(path.join(os.tmpdir(),'audit-report-')),dir=path.join(base,'artifacts/order-monitor-20261015-1726');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'completion.json'),JSON.stringify({checkedAt:'2026-10-15T17:33:51Z',github:{tracked:25,newComments:0,stateChanges:0}}));const f=fixture();
+ try{f.add('report','failed','order-report');f.add('paid','failed','order-report',50,null);const before=f.budget.serialize();const report=auditFounderTasks({...f,base,power:{enabled:true},apply:true,now:Date.parse('2026-10-15T18:00:00Z')});assert.equal(report.actions.find(a=>a.id==='report').action,'recover-local-order-report');const j=f.controller.prepare("SELECT * FROM founder_jobs WHERE id='report'").get();assert.equal(j.status,'done');assert.equal(hash(j.result),j.digest);const r=JSON.parse(j.result);assert.equal(r.report.status,'partial');assert.deepEqual(r.report.prs,[]);assert.equal(f.controller.prepare("SELECT status FROM founder_jobs WHERE id='paid'").get().status,'failed');assert.deepEqual(f.budget.serialize(),before);assert.equal(auditFounderTasks({...f,base,power:{enabled:true},apply:true}).applied,0);
+ }finally{f.close();fs.rmSync(base,{recursive:true,force:true});}
 });

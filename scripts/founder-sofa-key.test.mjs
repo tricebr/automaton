@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {execFileSync} from 'node:child_process';
+import {readSofaCredential} from './founder-sofa-key.mjs';
+test('reads only the dedicated DPAPI credential even when Windows PowerShell inherits a PowerShell 7 module path',{skip:process.platform!=='win32'},()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sofa-key-')),oldLocal=process.env.LOCALAPPDATA,oldModules=process.env.PSModulePath;
+ try{const encrypted=execFileSync('pwsh.exe',['-NoProfile','-NonInteractive','-Command',"ConvertFrom-SecureString (ConvertTo-SecureString 'test-sofa-credential-not-real-123456789012345' -AsPlainText -Force)"],{encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','ignore']}).trim();fs.mkdirSync(path.join(dir,'Numaron'));fs.writeFileSync(path.join(dir,'Numaron','sofa-key.dpapi'),encrypted);process.env.LOCALAPPDATA=dir;process.env.PSModulePath=execFileSync('pwsh.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::Write((Join-Path $PSHOME 'Modules'))"],{encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','ignore']});
+ assert.equal(readSofaCredential(),'test-sofa-credential-not-real-123456789012345');fs.writeFileSync(path.join(dir,'Numaron','sofa-key.dpapi'),'invalid ciphertext');assert.equal(readSofaCredential(),undefined);fs.unlinkSync(path.join(dir,'Numaron','sofa-key.dpapi'));assert.equal(readSofaCredential(),undefined);
+ }finally{if(oldLocal===undefined)delete process.env.LOCALAPPDATA;else process.env.LOCALAPPDATA=oldLocal;if(oldModules===undefined)delete process.env.PSModulePath;else process.env.PSModulePath=oldModules;fs.rmSync(dir,{recursive:true,force:true});}
+});
