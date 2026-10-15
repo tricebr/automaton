@@ -1,0 +1,148 @@
+const zone='Europe/Zurich';
+export function missionDeck(snapshot){
+ const groups=workGroups(snapshot),completed=groups.all.filter(t=>t.status==='done').length,total=groups.all.length;
+ return {state:snapshot.autonomy?.status??'unknown',completed,total,progress:total?Math.round(completed/total*100):0,
+  missions:groups.active.slice(0,3),results:groups.results.length,attention:groups.attention.length,
+  milestones:[{icon:'✧',title:'Erster Kontakt',detail:'Eine Mission abgeschlossen',earned:completed>=1},{icon:'◈',title:'Momentum',detail:'10 Missionen abgeschlossen',earned:completed>=10},{icon:'✦',title:'Konstellation',detail:'50 Missionen abgeschlossen',earned:completed>=50}]};
+}
+
+const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});
+
+export const businessDay=ms=>dayFormat.format(ms);
+
+export function periodRange(period,now=Date.now()){
+
+ const today=businessDay(now),[y,m,d]=today.split('-').map(Number);
+
+ const utcDay=(y,m,d)=>new Date(Date.UTC(y,m-1,d)).toISOString().slice(0,10);
+
+ if(period==='week')return {from:utcDay(y,m,d-6),to:today};
+
+ if(period==='month')return {from:utcDay(y,m-1,1),to:utcDay(y,m,0)};
+
+ if(period==='year')return {from:`${y-1}-01-01`,to:`${y-1}-12-31`};
+
+ return {from:today,to:today};
+
+}
+
+export function workGroups(s){
+
+ const jobs=(s.autonomy?.tasks??[]).map(t=>({...t,source:'autonomy'}));
+
+ const own=(s.operations?.tasks??[]).map(t=>({...t,source:'own'}));
+
+ const selfDirected=s.autonomy?.autonomyContract?.mode==='self-directed';
+ const human=new Set((s.autonomy?.autonomyContract?.exceptions??[]).filter(e=>e.requiresHuman).map(e=>e.taskId));
+ const all=selfDirected?jobs:[...jobs,...own],issues=all.filter(t=>['blocked','failed','review'].includes(t.status));
+ const attention=selfDirected?issues.filter(t=>human.has(t.id)):issues,managedIssues=selfDirected?issues.filter(t=>!human.has(t.id)):[];
+
+ const products=(s.products??[]).filter(p=>p.available).map(p=>({...p,source:'product'}));
+
+ return {all,legacy:selfDirected?own:[],managedIssues,active:all.filter(t=>['queued','running','verifying','planned','working'].includes(t.status)),attention,checks:selfDirected?attention:[...attention,...products.filter(p=>!p.reviewed)],results:[...products,...jobs.filter(t=>t.status==='done')]};
+
+}
+
+export function founderControls(status){
+ if(status==='emergency_stopped')return [['start','Nach Not-Aus starten']];
+ const actions=status==='running'?[['pause','Pause'],['stop','Ausschalten']]:status==='paused'?[['resume','Fortsetzen'],['stop','Ausschalten']]:[['start','Einschalten']];
+ return [...actions,['emergency-stop','Not-Aus']];
+}
+
+export function financialSummary(s,period,now=Date.now()){
+
+ const range=periodRange(period,now),report=s.financeReport;
+
+ const inside=day=>day>=range.from&&day<=range.to;
+
+ const currencies={},transactions=(report?.transactions??[]).filter(t=>inside(businessDay(t.created*1000)));
+
+ let unknown=false;
+
+ for(const t of transactions){const c=currencies[t.currency]??={receiptsMinor:0,refundsMinor:0,feesMinor:0,payoutsMinor:0};c.feesMinor+=t.fee;
+
+  if(['charge','payment'].includes(t.type)&&t.amount>=0)c.receiptsMinor+=t.amount;
+
+  else if(['refund','payment_refund'].includes(t.type)&&t.amount<=0)c.refundsMinor-=t.amount;
+
+  else if(t.type==='payout'&&t.amount<=0)c.payoutsMinor-=t.amount;
+
+  else if(t.type==='stripe_fee'&&t.amount<=0)c.feesMinor-=t.amount;
+
+  else unknown=true;
+
+ }
+
+ const entries=s.autonomy?.budget?.entries?.filter(e=>inside(e.day))??[];
+
+ const costMinor=s.autonomy?.budget?.entries&&s.autonomy.budget.entriesComplete!==false?entries.reduce((n,e)=>n+(e.actualCostRappen??0),0):null;
+
+ const reservedMinor=entries.reduce((n,e)=>n+(e.actualCostRappen===null?e.maxCostRappen:0),0);
+
+ const coverage=report?.coverage;
+
+ // A current period can be complete up to the report's observation; historical periods need their full final day.
+
+ const current=range.to===businessDay(now);
+
+ const covered=Array.isArray(report?.transactions)&&coverage?.complete===true&&businessDay(coverage.from*1000)<range.from&&(current?businessDay(coverage.to*1000)>=range.to:businessDay(coverage.to*1000)>range.to);
+
+ const actualEntries=(s.financeLedger?.entries??[]).filter(e=>inside(e.day));
+
+ const sum=kind=>actualEntries.filter(e=>e.kind===kind).reduce((n,e)=>n+e.amount,0);
+
+ const actualIncome=sum('income'),actualExpenses=sum('expense')-sum('expense-refund'),actualRefunds=sum('refund');
+
+ const closure=s.financeLedger?.closures?.[period];
+
+ const unresolvedBilling=s.billing&&(s.billing.providers?.length!==2||s.billing.providers.some(p=>p.status!=='connected'||p.from>range.from||p.rows.some(r=>r.day>=range.from&&r.day<=range.to&&r.amount!==0&&!(s.financeLedger?.entries??[]).some(e=>e.kind==='expense'&&e.day===r.day&&r.reference&&e.evidence===r.reference))));
+ const unresolvedCostInvoices=Boolean(unresolvedBilling)||(s.costImport?.invoices??[]).some(i=>!['ready','excluded'].includes(i.reason));
+ const reconciled=s.financeStatus?.reportAvailable!==false&&!unresolvedCostInvoices&&covered&&!unknown&&reservedMinor===0&&s.autonomy?.budget?.entriesComplete!==false&&Object.keys(currencies).every(c=>c==='chf')&&closure?.complete===true;
+
+ const chf=currencies.chf??{receiptsMinor:0,refundsMinor:0,feesMinor:0};
+
+ // Reference-rate values are kept separate from the evidence-backed ledger.
+ const reconciliationIssues=[],billingDetails=[];
+ let convertedCosts=0,matchedBillingCount=0,conversionMissing=false,ambiguousOverlap=false,partial=!covered;
+ if(s.financeStatus?.reportAvailable===false){partial=true;reconciliationIssues.push(s.financeStatus.reason==='powered-off'?'Numaron ist ausgeschaltet; gespeicherter Einnahmenstand verwendet.':'Aktueller Einnahmenabruf fehlgeschlagen; letzter gespeicherter Stand verwendet.');}
+ if(!covered)reconciliationIssues.push('Stripe-Daten für den Zeitraum sind unvollständig.');
+ const allExpenses=(s.financeLedger?.entries??[]).filter(e=>e.kind==='expense');
+ for(const p of s.billing?.providers??[]){
+  if(p.status!=='connected'){partial=true;reconciliationIssues.push(p.provider+(p.status==='stale'?': letzter gespeicherter Kostenstand; aktueller Abruf fehlt.':': Kostenabruf fehlt.'));if(p.status!=='stale')continue;}
+  if(p.from>range.from){partial=true;reconciliationIssues.push(p.provider+': Daten vor '+p.from+' fehlen.');}
+  const rows=p.rows.filter(r=>inside(r.day));
+  if(p.provider==='Cloudflare'&&rows.some(r=>r.amount!==0)){partial=true;reconciliationIssues.push('Cloudflare: numaron-Anteil und Art der Kontobuchungen sind noch ungeklärt.');continue;}
+  if(p.provider!=='OpenAI')continue;
+  const overlapping=actualEntries.some(e=>e.kind==='expense'&&/^OpenAI\b/i.test(e.title??'')&&!rows.some(r=>r.reference===e.evidence));
+  if(overlapping&&rows.length){ambiguousOverlap=true;reconciliationIssues.push('OpenAI-Beleg und API-Nutzung können dieselben Kosten enthalten; Zuordnung fehlt.');}
+  for(const r of rows){
+   const matched=allExpenses.find(e=>r.reference&&e.evidence===r.reference);
+   if(matched){matchedBillingCount++;billingDetails.push({...r,matched:true,actualMinor:matched.amount});if(matched.day!==r.day){partial=true;reconciliationIssues.push('Ein zugeordneter API-Beleg hat ein abweichendes Buchungsdatum.');}continue;}
+   if(!Number.isFinite(r.amountCHF)){conversionMissing=true;continue;}
+   convertedCosts+=r.amountCHF*100;billingDetails.push({...r,matched:false});
+  }
+ }
+ const automaticCostMinor=conversionMissing?null:Math.round(convertedCosts);
+ const pendingInvoices=(s.costImport?.invoices??[]).filter(i=>!['ready','excluded'].includes(i.reason));
+ if(pendingInvoices.length){partial=true;reconciliationIssues.push(pendingInvoices.length+' Kostenbeleg(e): Anteil, Zeitraum oder CHF-Belastung noch ungeklärt.');}
+ if(conversionMissing)reconciliationIssues.push('Für abgerufene Fremdwährungskosten fehlt ein gültiger Tageskurs.');
+ if(unknown||Object.keys(currencies).some(c=>c!=='chf'))reconciliationIssues.push('Zahlungsarten oder Fremdwährungs-Einnahmen sind noch ungeklärt.');
+ if(s.billing?.fx?.stale)reconciliationIssues.push('Wechselkursquelle derzeit nicht erreichbar; gespeicherte Tageskurse verwendet.');
+ if(!s.billing&&!reconciled){partial=true;reconciliationIssues.push('Direkte API- und Hostingkosten sind noch nicht verbunden.');}
+ if(!reconciled)reconciliationIssues.push('Vollständigkeit deiner CHF-Angaben sowie Domain- und Geschäftsausgaben noch bestätigen.');
+ if(reservedMinor>0)reconciliationIssues.push('Laufende Aufgaben können weitere Kosten verursachen.');
+ const knownReceiptsMinor=chf.receiptsMinor+actualIncome;
+ const calculatedProfitMinor=Array.isArray(report?.transactions)&&!unknown&&Object.keys(currencies).every(c=>c==='chf')&&!conversionMissing&&!ambiguousOverlap?knownReceiptsMinor-chf.refundsMinor-actualRefunds-chf.feesMinor-actualExpenses-(automaticCostMinor??0):null;
+ const profitStatus=reconciled?'reconciled':calculatedProfitMinor===null?'unavailable':partial?'partial':'provisional';
+
+ return {...range,currencies,transactions,entries,costMinor,reservedMinor,covered,unknown,actualEntries,actualExpenses,closure,reconciled,unresolvedCostInvoices,calculatedProfitMinor,profitStatus,reconciliationIssues:[...new Set(reconciliationIssues)],automaticCostMinor,billingDetails,matchedBillingCount,knownReceiptsMinor,receiptsMinor:covered?chf.receiptsMinor+actualIncome:null,knownNetMinor:covered&&costMinor!==null&&!unknown?chf.receiptsMinor-chf.refundsMinor-chf.feesMinor-costMinor:null,profitMinor:reconciled?chf.receiptsMinor+actualIncome-chf.refundsMinor-actualRefunds-chf.feesMinor-actualExpenses:null,observedAt:report?.observedAt??null};
+
+}
+
+export function automaticContinuation(task){
+ if(!['blocked','failed'].includes(task.status))return null;
+ if(Number.isFinite(task.nextRetryAt))return 'numaron wiederholt diesen Lauf automatisch nach der Wartezeit, sobald das bestehende Budget reicht. Du musst nichts weiterschalten.';
+ if(task.reason==='Budget daily limit')return 'numaron prüft die Budgetkapazität automatisch und setzt fort, sobald sie reicht. Offene Kostenreservierungen zählen weiterhin zum Limit.';
+ if(task.reason==='Voraussetzung nicht erfolgreich abgeschlossen.')return 'numaron wartet auf die Vorarbeit und setzt diese Aufgabe nach deren erfolgreichem Abschluss automatisch fort. Eine gescheiterte Vorarbeit bleibt separat sichtbar.';
+ return null;
+}

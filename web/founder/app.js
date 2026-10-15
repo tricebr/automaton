@@ -1,8 +1,8 @@
 import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs';
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
-import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls} from './model.mjs';
+import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck} from './model.mjs';
 
-import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged} from './interaction.mjs';
+import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,explainTerm} from './interaction.mjs';
 
 import {renderTradingEngine,renderTradeHighlight} from './trading.mjs';
 
@@ -321,7 +321,7 @@ function renderTradeReview(data){
 
 
 
-async function refresh(){void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
+async function refresh(){void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){document.querySelector('.neural-reactor')?.setAttribute('data-state','unknown');if($('reactorStatus'))$('reactorStatus').textContent='VERBINDUNG UNTERBROCHEN';if($('reactorDetail'))$('reactorDetail').textContent='Letzter Datenstand · Status wird geprüft';renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
 
 
 
@@ -601,11 +601,12 @@ function renderUsage(report){
 
 
 
-const views={trading:['trading'],work:['work'],checks:['checks'],overview:['aiHud','startTrading','longHistory','overview','control','usage'],operations:['operations','autonomousWork','research'],products:['products'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
+const views={trading:['trading'],work:['work'],checks:['checks'],overview:['aiHud','startTrading','longHistory','overview','nextAction','missionDeck','control','usage'],operations:['operations','autonomousWork','research'],products:['products'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
 
 function applyView(){
 
  const requested=location.hash.slice(1),view=Object.hasOwn(views,requested)?requested:'overview';
+ const rooms={overview:'01 / Brücke',operations:'02 / Missionszentrale',work:'02 / Missionszentrale',products:'03 / Fracht & Ergebnisse',finance:'04 / Ressourcen',trading:'04 / Markt-Radar',approvals:'05 / Kontrollstation',checks:'05 / Kontrollstation'};if($('deckLocation'))$('deckLocation').textContent=rooms[view]??rooms.overview;document.body.dataset.deck=view;
 
  if(view==='trading')$('accountDetails').open=true;
 
@@ -635,13 +636,41 @@ function filterProducts(){
 
 function hasUnsavedDraft(){return [...document.querySelectorAll('[data-draft],#operations input')].some(draftChanged);}
 
+function renderMissionDeck(){
+ const deck=missionDeck(snapshot),host=$('missionDeck');if(!host)return;
+ document.querySelector('.neural-reactor')?.setAttribute('data-state',deck.state);
+ const states={running:'SYSTEM ONLINE',paused:'SYSTEM PAUSIERT',stopped:'SYSTEM AUS',emergency_stopped:'NOT-AUS AKTIV',unknown:'STATUS UNBEKANNT'};
+ $('reactorStatus').textContent=states[deck.state]??'STATUS UNBEKANNT';
+ $('reactorDetail').textContent=deck.state==='running'?deck.missions.length?'Missionen in Bearbeitung':'Bereit für die nächste Mission':'Letzter gemeldeter Betriebszustand';
+ host.replaceChildren();
+ const top=el('div',undefined,'deck-heading'),intro=el('div');intro.append(el('div','DEIN MISSION CONTROL','eyebrow'),el('h2','Aus Ideen wird Fortschritt.'));
+ const badge=el('a',deck.results+' Ergebnisse ↗','deck-counter');badge.href='#products';top.append(intro,badge);host.append(top);
+ const grid=el('div',undefined,'mission-grid');
+ const progress=el('article',undefined,'mission-score'),ring=el('div',undefined,'progress-orbit');
+ ring.style.setProperty('--progress',deck.progress+'%');ring.setAttribute('role','img');ring.setAttribute('aria-label',deck.completed+' von '+deck.total+' erfassten Missionen abgeschlossen');ring.append(el('strong',deck.progress+'%'),el('span','abgeschlossen'));
+ progress.append(el('div','MISSION FORTSCHRITT','eyebrow'),ring,el('p',deck.completed+' von '+deck.total+' erfassten Missionen abgeschlossen'));grid.append(progress);
+ const list=el('div',undefined,'mission-stream');
+ for(const [i,t] of deck.missions.entries()){
+  const card=el('a',undefined,'mission-tile');card.href='#work';const head=el('div',undefined,'mission-tile-top');
+  const labels={queued:'In der Warteschlange',planned:'Geplant',running:'In Bearbeitung',working:'In Bearbeitung',verifying:'Wird geprüft'};
+  head.append(el('span','MISSION / '+String(i+1).padStart(2,'0')),el('span',labels[t.status]??t.status,'mission-state'));
+  card.append(head,el('h3',taskTitle(t)??'Neue Mission'),el('span','Mission ansehen ↗','mission-open'));list.append(card);
+ }
+ if(!deck.missions.length)list.append(el('div','Die nächste Mission beginnt mit deiner Idee.','mission-empty'));
+ grid.append(list);host.append(grid);
+ const milestones=el('div',undefined,'milestones');
+ for(const m of deck.milestones){const card=el('div',undefined,'milestone');card.dataset.earned=String(m.earned);card.append(el('span',m.icon,'milestone-icon'),el('strong',m.title),el('small',m.detail),el('span',m.earned?'Erreicht ✓':'Noch offen','milestone-label'));milestones.append(card);}
+ host.append(milestones);
+}
+
 function renderFounderOverview(){
+ renderMissionDeck();
 
  const g=workGroups(snapshot);
 
  $('aiState').textContent={running:'AI arbeitet',paused:'AI pausiert',stopped:'AI ausgeschaltet',emergency_stopped:'AI sofort gestoppt'}[snapshot.autonomy?.status]??'AI-Status nicht verfügbar';
 
- $('aiMissionCount').textContent=g.active.length+' laufende Missionen · '+g.results.length+' Ergebnisse bereit';
+ $('aiMissionCount').textContent=g.active.length+' offene Missionen · '+g.results.length+' Ergebnisse bereit';
 
  $('aiHud').dataset.running=String(snapshot.autonomy?.status==='running');
 
@@ -669,6 +698,11 @@ function renderFounderOverview(){
 
  }
 
+ if(['paused','stopped','emergency_stopped'].includes(snapshot.autonomy?.status)){
+  $('nextStepTitle').textContent=snapshot.autonomy.status==='paused'?'Ein Moment zum Durchatmen.':'Dein Universum wartet auf dich.';
+  $('nextStepText').textContent='Der KI-Betrieb ist '+(snapshot.autonomy.status==='paused'?'pausiert':'ausgeschaltet')+'. Deine offenen Missionen und bisherigen Ergebnisse bleiben erhalten.';
+  $('nextStepLink').href='#control';$('nextStepLink').textContent='Betriebssteuerung ansehen →';
+ }
  $('workList').replaceChildren(...g.active.map(taskPanel));if(!g.active.length)$('workList').append(el('p','Aktuell keine laufende oder wartende Aufgabe.'));
 
  $('attentionList').replaceChildren(...g.attention.map((t,i)=>taskPanel({...t,attentionNumber:i+1})));if(!g.attention.length)$('attentionList').append(el('p','Keine blockierte Aufgabe und keine Aufgabe zur Abnahme.'));
@@ -731,9 +765,9 @@ function taskPanel(t){
 
   if(['queued','blocked','failed'].includes(t.status)&&snapshot.autonomy?.status!=='running'&&snapshot.autonomy?.autonomyContract?.mode!=='self-directed'){panel.append(el('p','Der Betrieb ist pausiert oder gestoppt. Wartende Aufgaben werden erst nach dem Fortsetzen bearbeitet.'));const resume=el('button','Betrieb fortsetzen');resume.onclick=async()=>{resume.disabled=true;try{const a=snapshot.autonomy;await api('/api/control',{action:a.status==='paused'?'resume':'start',revision:a.revision});await refresh();}catch(e){$('error').textContent=e.message;resume.disabled=false;}};panel.append(resume);}
 
-  for(const id of t.dependencies??[]){const dep=snapshot.autonomy?.tasks.find(j=>j.id===id);if(dep?.status==='done'){const open=el('button','Vorarbeit ansehen');open.onclick=()=>openJob(dep);panel.append(open);}}
+  for(const id of t.dependencies??[]){const dep=snapshot.autonomy?.tasks?.find(j=>j.id===id);if(dep?.status==='done'){const open=el('button','Vorarbeit ansehen');open.onclick=()=>openJob(dep);panel.append(open);}}
 
-  if(t.dependencies?.length){const names=t.dependencies.map(id=>snapshot.autonomy?.tasks.find(j=>j.id===id)).map(dep=>dep?taskTitle(dep)+' ('+(taskLabels[dep.status]??dep.status)+')':'Vorarbeit nicht im aktuellen Bestand');panel.append(el('p','Vorarbeiten: '+names.join(' · ')));}
+  if(t.dependencies?.length){const names=t.dependencies.map(id=>snapshot.autonomy?.tasks?.find(j=>j.id===id)).map(dep=>dep?taskTitle(dep)+' ('+(taskLabels[dep.status]??dep.status)+')':'Vorarbeit nicht im aktuellen Bestand');panel.append(el('p','Vorarbeiten: '+names.join(' · ')));}
 
  }
 
@@ -803,7 +837,7 @@ function renderFinancialDetails(){
 
  if(!expenses.length)box.append(el('p','Keine kostenpflichtigen technischen Buchungen im ausgewählten Zeitraum erfasst.'));
 
- for(const e of expenses){const job=snapshot.autonomy?.tasks.find(t=>t.run_id===e.id)??snapshot.autonomy?.tasks.find(t=>t.id===e.taskId);const row=el('div',undefined,'expense-row');row.append(el('span',date(e.day)+' · '+(job?taskTitle(job):'Aufgabe '+e.taskId)),el('strong',e.actualCostRappen===null?'Reserviert '+money(e.maxCostRappen):money(e.actualCostRappen)));box.append(row);}
+ for(const e of expenses){const job=snapshot.autonomy?.tasks?.find(t=>t.run_id===e.id)??snapshot.autonomy?.tasks?.find(t=>t.id===e.taskId);const row=el('div',undefined,'expense-row');row.append(el('span',date(e.day)+' · '+(job?taskTitle(job):'Aufgabe '+e.taskId)),el('strong',e.actualCostRappen===null?'Reserviert '+money(e.maxCostRappen):money(e.actualCostRappen)));box.append(row);}
 
 }
 
@@ -973,7 +1007,7 @@ $('refreshTop').onclick=()=>{if(hasUnsavedDraft()){$('error').textContent='Speic
 
 $('refresh').onclick=$('refreshTop').onclick;
 
-window.addEventListener('hashchange',applyView);
+window.addEventListener('hashchange',()=>{hideHelp();applyView();if(Object.hasOwn(views,location.hash.slice(1)))window.scrollTo({top:0,behavior:'instant'});});
 
 applyView();
 
@@ -1052,3 +1086,31 @@ function renderRadar(radar){
 
 setInterval(()=>{if(radarDisplayed?.status==='setups'&&(Date.now()>=Date.parse(radarDisplayed.expiresAt)||(radarDisplayed.setups??[]).some(p=>Date.now()>=Date.parse(p.expiresAt))))renderRadar({...radarDisplayed,status:'stale',setups:[]});},1000);
 
+
+
+// One shared help layer keeps explanations clear of clipped cards and scrolling panels.
+const helpBubble=el('div',undefined,'help-bubble');helpBubble.id='numaronHelp';helpBubble.setAttribute('role','tooltip');helpBubble.hidden=true;document.body.append(helpBubble);
+let helpAnchor=null,helpPinned=false,helpTimer;
+function hideHelp(){helpBubble.hidden=true;helpAnchor?.removeAttribute('aria-describedby');helpAnchor=null;helpPinned=false;}
+function placeHelp(){if(!helpAnchor?.isConnected){hideHelp();return;}const r=helpAnchor.getBoundingClientRect(),w=Math.min(320,innerWidth-28);helpBubble.style.width=w+'px';helpBubble.style.left=Math.max(14,Math.min(r.left-15,innerWidth-w-14))+'px';const h=helpBubble.offsetHeight;helpBubble.style.top=(r.bottom+h+20<innerHeight?r.bottom+10:Math.max(12,r.top-h-10))+'px';}
+function showHelp(anchor,text){clearTimeout(helpTimer);if(helpAnchor!==anchor)hideHelp();helpAnchor=anchor;helpBubble.textContent=text;helpBubble.hidden=false;anchor.setAttribute('aria-describedby',helpBubble.id);placeHelp();}
+function scheduleHide(){clearTimeout(helpTimer);helpTimer=setTimeout(()=>{if(!helpPinned)hideHelp();},180);}
+function makeHelpButton(label,text){
+  const button=el('button','?','help-trigger');button.type='button';button.setAttribute('aria-label','Erklärung: '+label);
+  button.addEventListener('pointerenter',()=>showHelp(button,text));button.addEventListener('pointerleave',scheduleHide);button.addEventListener('focus',()=>showHelp(button,text));button.addEventListener('blur',()=>{if(!helpPinned)hideHelp();});
+  button.addEventListener('click',event=>{event.stopPropagation();if(helpAnchor===button&&helpPinned)hideHelp();else{showHelp(button,text);helpPinned=true;}});return button;
+}
+function installHelp(){
+ const detached=helpAnchor&&!helpAnchor.isConnected?helpAnchor:null;
+ for(const link of document.querySelectorAll('.metrics > a.metric')){const label=link.querySelector('span')?.textContent??'',text=explainTerm(label);if(!text)continue;const shell=el('div',undefined,'metric-shell');link.before(shell);shell.append(link,makeHelpButton(label,text));}
+ for(const node of document.querySelectorAll('main h2,main h3,main .eyebrow,.period-bar>span,.milestone strong')){
+  if(node.querySelector(':scope > .help-trigger')||node.closest('a,button,summary,dialog'))continue;
+  const label=node.textContent.trim(),text=explainTerm(label);if(!text)continue;node.dataset.helpAttached='true';
+  node.append(makeHelpButton(label,text));
+ }
+ if(detached){const replacement=[...document.querySelectorAll('.help-trigger')].find(button=>button.getAttribute('aria-label')===detached.getAttribute('aria-label'));if(replacement&&helpPinned){helpAnchor=replacement;replacement.setAttribute('aria-describedby',helpBubble.id);placeHelp();}else hideHelp();}
+}
+helpBubble.addEventListener('pointerenter',()=>clearTimeout(helpTimer));helpBubble.addEventListener('pointerleave',scheduleHide);
+document.addEventListener('keydown',event=>{if(event.key==='Escape')hideHelp();});document.addEventListener('pointerdown',event=>{if(!helpBubble.contains(event.target)&&!event.target.closest('.help-trigger'))hideHelp();});
+window.addEventListener('resize',()=>{if(helpAnchor)placeHelp();});window.addEventListener('scroll',()=>{if(helpAnchor)placeHelp();},true);
+let helpScheduled=false;new MutationObserver(()=>{if(helpScheduled)return;helpScheduled=true;queueMicrotask(()=>{helpScheduled=false;installHelp();});}).observe(document.querySelector('main'),{childList:true,subtree:true});installHelp();

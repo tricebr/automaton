@@ -33,3 +33,10 @@ test('unchanged selects do not block refresh while actual selection edits stay p
  assert.equal(draftChanged({tagName:'TEXTAREA',value:'new draft',defaultValue:''}),true);
  assert.equal(draftChanged({tagName:'INPUT',value:'saved',defaultValue:'saved'}),false);
 });
+import {explainTerm} from '../web/founder/interaction.mjs';
+test('context help explains finance and mission terms without inventing outcomes',()=>{
+ assert.match(explainTerm('MISSION FORTSCHRITT'),/abgeschlossen/);
+ assert.match(explainTerm('Gewinn ↗'),/Ausgaben/);
+ assert.match(explainTerm('Swap'),/Finanzierung/);
+ assert.equal(explainTerm('Unbekannte neue Überschrift'),null);
+});
