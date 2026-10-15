@@ -102,3 +102,14 @@ button{color:var(--ink);border:1px solid var(--line);background:var(--surface)}b
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .metric-shell{position:relative;min-width:0}.metric-shell>.metric{height:100%;padding-right:45px!important}.metric-shell>.help-trigger{position:absolute;top:18px;right:15px;margin:0;z-index:1}
+
+/* Locally hosted Manrope: softer typography, no external font requests. */
+@font-face{font-family:Manrope;font-style:normal;font-weight:200 800;font-display:swap;src:url('./fonts/Manrope-Variable.ttf') format('truetype')}
+:root{--font-ui:Manrope,'Segoe UI',sans-serif;font-family:var(--font-ui);font-optical-sizing:auto}
+body,button,input,textarea,select,.help-bubble,.help-trigger{font-family:var(--font-ui)}
+body{font-weight:450;line-height:1.7}button,input,textarea,select{font-size:inherit}
+.hero h1{font-family:var(--font-ui);font-weight:620;letter-spacing:-2.6px;line-height:1.12}.hero h1 em{font-weight:500}.hero p{font-weight:450;line-height:1.95}
+h2,.workspace-panel h2,.section-heading h2,.deck-heading h2{font-weight:620;letter-spacing:-.7px;line-height:1.35}h3,.card h3,.mission-tile h3{font-weight:600;letter-spacing:-.3px;line-height:1.6}
+nav a{font-weight:550;letter-spacing:0}.brand{font-family:var(--font-ui);font-weight:750;letter-spacing:-.9px}.metric strong,.progress-orbit strong{font-family:var(--font-ui);font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-1.3px}
+.card p,.notice p,.task-panel p{line-height:1.85}.milestone strong{font-weight:650}.help-bubble{font-size:13px;line-height:1.85}.primary-link{font-weight:650}
+@media(max-width:760px){.hero h1{letter-spacing:-1.5px;line-height:1.14}.hero p{line-height:1.85}.mission-tile h3{line-height:1.65}}

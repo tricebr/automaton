@@ -106,13 +106,13 @@ export async function startFounderDashboard({store=createFounderStore(),port=0,r
 
  let redeemed=false,origin='';const expires=Date.now()+8*60*60*1000;
 
- const assets=new Map([['/', ['index.html','text/html; charset=utf-8']],['/app.js',['app.js','text/javascript; charset=utf-8']],['/model.mjs',['model.mjs','text/javascript; charset=utf-8']],['/interaction.mjs',['interaction.mjs','text/javascript; charset=utf-8']],['/trading.mjs',['trading.mjs','text/javascript; charset=utf-8']],['/long-history.mjs',['long-history.mjs','text/javascript; charset=utf-8']],['/finance-refresh.mjs',['finance-refresh.mjs','text/javascript; charset=utf-8']],['/style.css',['style.css','text/css; charset=utf-8']]]);
+ const assets=new Map([['/fonts/Manrope-Variable.ttf',['fonts/Manrope-Variable.ttf','font/ttf']],['/', ['index.html','text/html; charset=utf-8']],['/app.js',['app.js','text/javascript; charset=utf-8']],['/model.mjs',['model.mjs','text/javascript; charset=utf-8']],['/interaction.mjs',['interaction.mjs','text/javascript; charset=utf-8']],['/trading.mjs',['trading.mjs','text/javascript; charset=utf-8']],['/long-history.mjs',['long-history.mjs','text/javascript; charset=utf-8']],['/finance-refresh.mjs',['finance-refresh.mjs','text/javascript; charset=utf-8']],['/style.css',['style.css','text/css; charset=utf-8']]]);
 
  const server=http.createServer(async(req,res)=>{
 
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
 
-  res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+  res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
 
   const json=(status,data)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
 
