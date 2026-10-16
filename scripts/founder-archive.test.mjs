@@ -16,7 +16,9 @@ test('archive persists verified completed jobs beyond the live snapshot and page
   for(let i=0;i<146;i++)c.enqueue({id:'done-'+i,rootTaskId:'done-'+i,kind:'local',input:{title:'Completed '+i},dependencies:[],resources:[]});
   c.enqueue({id:'waiting',rootTaskId:'waiting',kind:'local',input:{notBefore:Date.now()+86400000},dependencies:[],resources:[]});
   c.control('start');for(let i=0;i<37;i++)await c.tick();
-  assert.equal(c.snapshot().tasks.length,100);
+  assert.equal(c.snapshot().tasks.filter(t=>t.status==='done').length,100);
+  assert.equal(c.snapshot().tasks.length,101);
+  assert.ok(c.snapshot().tasks.some(t=>t.id==='waiting'&&t.status==='queued'));
   const budgetBefore=JSON.stringify(budget.snapshot()),ids=[];let cursor=null;
   do{const page=c.archive({limit:17,cursor});assert.equal(page.total,146);assert.ok(page.items.every(t=>t.status==='done'&&t.digest));ids.push(...page.items.map(t=>t.id));cursor=page.nextCursor;}while(cursor);
   assert.equal(ids.length,146);assert.equal(new Set(ids).size,146);assert.ok(!ids.includes('waiting'));assert.equal(JSON.stringify(budget.snapshot()),budgetBefore);
