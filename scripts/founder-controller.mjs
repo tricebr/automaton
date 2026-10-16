@@ -1,3 +1,4 @@
+import {splitPrivateTask} from './founder-private-split.mjs';
 import Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
 const validId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(x);
@@ -45,7 +46,7 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
   const b=budget.snapshot(),entries=b.entries??[],receipt=entries.find(e=>e.id===row.run_id),root=JSON.parse(row.payload).rootTaskId;
   return b.active&&receipt?.actualCostRappen!==null&&receipt?.actualCostRappen!==undefined&&b.entriesComplete!==false&&b.remainingRappen>=a.maxCostRappen&&b.dayRemainingRappen>=a.maxCostRappen&&entries.filter(e=>e.taskId===root).reduce((n,e)=>n+(e.actualCostRappen??e.maxCostRappen),0)+a.maxCostRappen<=b.taskRappen;
  }
- function snapshot(){return {...state(),taskCounts:Object.fromEntries(db.prepare('SELECT status,COUNT(*) n FROM founder_jobs GROUP BY status').all().map(r=>[r.status,r.n])),observedAt:new Date().toISOString(),maxWorkers,activeWorkers:active.size,budget:budget.snapshot(),capabilities:Object.entries(adapters).map(([kind,a])=>({kind,status:a.available===false?'blocked':'available',reason:a.reason??null,maxCostRappen:a.maxCostRappen,lastSuccessAt:db.prepare("SELECT MAX(updated_ms) at FROM founder_jobs WHERE json_extract(payload,'$.kind')=? AND status='done'").get(kind).at,lastOutcome:db.prepare("SELECT status,updated_ms AS at FROM founder_jobs WHERE json_extract(payload,'$.kind')=? AND status IN ('done','failed','blocked') ORDER BY updated_ms DESC LIMIT 1").get(kind)??null})),tasks:db.prepare('SELECT id,payload,status,reason,run_id,digest,created_ms,updated_ms,attempts,next_retry_ms FROM founder_jobs ORDER BY created_ms DESC,id LIMIT 100').all().map(r=>({...r,...JSON.parse(r.payload),nextRetryAt:r.next_retry_ms,nextEligibleAt:Math.max(JSON.parse(r.payload).input?.notBefore??0,adapters[JSON.parse(r.payload).kind]?.nextReadyAt??0,r.next_retry_ms??0)||null,diagnostic:publicDiagnostic(db.prepare('SELECT diagnostic FROM founder_attempts WHERE run_id=?').get(r.run_id)?.diagnostic),retryAllowed:retryAllowed(r),retryMaxCostRappen:adapters[JSON.parse(r.payload).kind]?.maxCostRappen??null,payload:undefined})),audit:db.prepare('SELECT * FROM founder_events ORDER BY seq DESC LIMIT 60').all()};}
+ function snapshot(){return {...state(),taskCounts:Object.fromEntries(db.prepare('SELECT status,COUNT(*) n FROM founder_jobs GROUP BY status').all().map(r=>[r.status,r.n])),observedAt:new Date().toISOString(),maxWorkers,activeWorkers:active.size,budget:budget.snapshot(),capabilities:Object.entries(adapters).map(([kind,a])=>({kind,status:a.available===false?'blocked':'available',reason:a.reason??null,maxCostRappen:a.planningMaxCostRappen??a.maxCostRappen,lastSuccessAt:db.prepare("SELECT MAX(updated_ms) at FROM founder_jobs WHERE json_extract(payload,'$.kind')=? AND status='done'").get(kind).at,lastOutcome:db.prepare("SELECT status,updated_ms AS at FROM founder_jobs WHERE json_extract(payload,'$.kind')=? AND status IN ('done','failed','blocked') ORDER BY updated_ms DESC LIMIT 1").get(kind)??null})),tasks:db.prepare('SELECT id,payload,status,reason,run_id,digest,created_ms,updated_ms,attempts,next_retry_ms FROM founder_jobs ORDER BY created_ms DESC,id LIMIT 100').all().map(r=>({...r,...JSON.parse(r.payload),nextRetryAt:r.next_retry_ms,nextEligibleAt:Math.max(JSON.parse(r.payload).input?.notBefore??0,adapters[JSON.parse(r.payload).kind]?.nextReadyAt??0,r.next_retry_ms??0)||null,diagnostic:publicDiagnostic(db.prepare('SELECT diagnostic FROM founder_attempts WHERE run_id=?').get(r.run_id)?.diagnostic),retryAllowed:retryAllowed(r),retryMaxCostRappen:adapters[JSON.parse(r.payload).kind]?.maxCostRappen??null,payload:undefined})),audit:db.prepare('SELECT * FROM founder_events ORDER BY seq DESC LIMIT 60').all()};}
  const claim=db.transaction(()=>{
   if(closing||state().status!=='running')return [];
   for(const row of db.prepare("SELECT j.*,a.diagnostic AS attempt_diagnostic FROM founder_jobs j LEFT JOIN founder_attempts a ON a.run_id=j.run_id WHERE j.status IN ('failed','blocked') AND j.next_retry_ms IS NULL AND j.attempts<3").all()){
@@ -134,11 +135,11 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
   if(closing||state().status!=='running')return;
   for(const row of db.prepare("SELECT j.*,a.result AS saved_result FROM founder_jobs j JOIN founder_attempts a ON a.run_id=j.run_id WHERE j.status='blocked' AND j.reason='Gespeichertes Ergebnis wird automatisch erneut geprüft.' AND a.result IS NOT NULL AND a.receipt IS NOT NULL").all()){
    const adapter=adapters[JSON.parse(row.payload).kind],generation=state().generation;
-   if(!adapter?.providerTracked||adapter.available===false)continue;
+   if((!adapter?.providerTracked&&!adapter?.recoverVerify)||adapter.available===false)continue;
    if(closing||state().status!=='running')break;
    update(row.id,'verifying');db.prepare('UPDATE founder_jobs SET owner_pid=?,lease_ms=? WHERE id=?').run(process.pid,Date.now()+180000,row.id);
    try{
-    if(Buffer.byteLength(row.saved_result)>262144||!await adapter.verify(JSON.parse(row.saved_result)))throw Error('Invalid saved result');
+    if(Buffer.byteLength(row.saved_result)>262144||!await (adapter.recoverVerify??adapter.verify)(JSON.parse(row.saved_result)))throw Error('Invalid saved result');
     if(closing||state().generation!==generation||!['running','paused'].includes(state().status)){update(row.id,'blocked','Gespeichertes Ergebnis wird automatisch erneut geprüft.');continue;}
     db.prepare("UPDATE founder_jobs SET status='done',reason=NULL,result=?,digest=?,next_retry_ms=NULL,updated_ms=? WHERE id=?").run(row.saved_result,hash(row.saved_result),Date.now(),row.id);audit(row.id,'recovered-verified-result');
    }catch{
@@ -149,6 +150,30 @@ export function openFounderController({file,budget,adapters,maxWorkers=4}){
  }
  const api={
   databaseFile:file,
+  preparePrivateSplits:db.transaction(()=>{
+   if(closing||state().status!=='running'||!adapters['private-part'])return [];
+   const prepared=[],b=budget.snapshot();
+   for(const row of db.prepare("SELECT * FROM founder_jobs WHERE status IN ('queued','failed') OR (status='blocked' AND reason=?)").all('Gespeichertes Ergebnis wird automatisch erneut gepr\u00fcft.')){
+    let task=JSON.parse(row.payload);if(!['private-analysis','private-draft'].includes(task.kind)||task.input?.splitAssembly||task.dependencies.length>17)continue;
+    if(row.status==='queued'&&row.attempts!==0)continue;
+    if(row.status!=='queued'){
+     const attempt=db.prepare('SELECT result,receipt FROM founder_attempts WHERE run_id=? AND task_id=?').get(row.run_id,row.id);
+     let saved,receipt;try{saved=JSON.parse(attempt?.result);receipt=JSON.parse(attempt?.receipt);}catch{continue;}
+     const settled=budget.receipt?.(row.run_id);
+     const entries=b.entries?.filter(e=>e.taskId===task.rootTaskId)??[],paid=entries.find(e=>e.id===row.run_id);
+     if(saved?.kind!==task.kind||saved?.status!=='incomplete'||saved.analysis!==null||saved.costEvidence?.outputTokens!==2000||saved.incompleteReason==='content_filter'||!receipt||!receipt.evidenceRef||settled?.evidenceRef!==receipt.evidenceRef||settled?.actualCostRappen!==receipt.actualCostRappen||paid?.actualCostRappen!==receipt.actualCostRappen||!Number.isSafeInteger(paid?.actualCostRappen)||saved.costReceipt?.evidenceRef!==receipt.evidenceRef||entries.some(e=>e.actualCostRappen===null)||b.entriesComplete===false||!b.active||Math.min(b.remainingRappen,b.dayRemainingRappen,b.taskRappen-entries.reduce((n,e)=>n+e.actualCostRappen,0))<50)continue;
+     const id='split-recovery-'+hash(row.id).slice(0,32);if(api.hasTask(id))continue;
+     task={...task,id,input:{...task.input,recoveryOf:row.id}};
+    }
+    const rootEntries=b.entries?.filter(e=>e.taskId===task.rootTaskId)??[];
+    const room=Math.min(b.remainingRappen,b.dayRemainingRappen,b.taskRappen-rootEntries.reduce((n,e)=>n+(e.actualCostRappen??e.maxCostRappen),0));
+    const plan=splitPrivateTask(task,{compact:room<150});for(const part of plan.parts)api.enqueue(part);
+    if(row.status==='queued')db.prepare('UPDATE founder_jobs SET payload=? WHERE id=? AND status=\'queued\' AND attempts=0').run(JSON.stringify(plan.parent),row.id);
+    else api.enqueue(plan.parent);
+    audit(task.id,'private-task-decomposed');prepared.push(task.id);
+   }
+   return prepared;
+  }).immediate,
   controlState:()=>({...state(),activeWorkers:active.size}),
   enqueue:db.transaction(input=>{
    if(!input||Object.keys(input).sort().join(',')!=='dependencies,id,input,kind,resources,rootTaskId'||!validId(input.id)||!validId(input.rootTaskId)||!validId(input.kind)||!Array.isArray(input.dependencies)||input.dependencies.length>20||!input.dependencies.every(validId)||input.dependencies.includes(input.id)||!Array.isArray(input.resources)||input.resources.length>10||!input.resources.every(validId))throw Error('Invalid task');

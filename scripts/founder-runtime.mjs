@@ -1,3 +1,4 @@
+import {createSplitPrivateAdapters,appendPrivateLessons} from './founder-private-split.mjs';
 import os from 'node:os';
 import {createLocalAccessCache,readLocalCredential} from './founder-local-access.mjs';
 import {founderMethods,pluginReadiness} from './founder-methods.mjs';
@@ -54,7 +55,8 @@ export function openFounderRuntime({base,directory=path.join(base,'artifacts/fou
   'external-communication':{available:false,maxCostRappen:0,reason:'Empfänger- und Auftragsrahmen für autonome Nachrichten noch nicht festgelegt.'},
   'live-trading':{available:false,maxCostRappen:0,reason:'Kein Handelskapital oder Verlustlimit durch das Betriebsbudget zugeteilt.'}
  };
- for(const kind of ['private-analysis','private-draft'])if(adapters[kind]){const original=adapters[kind].execute;adapters[kind].execute=async ctx=>{const k=knowledge.snapshot();const dependencies=ctx.dependencies.map(r=>({...r,sources:admissibleResearchSources(r.sources??[],k)}));if(!dependencies.some(r=>r.sources.length))throw Error('Fresh uncontradicted evidence unavailable');const lessons=k.filter(r=>r.id.startsWith('sofa-')&&!r.stale&&r.verification!=='contradicted').sort((a,b)=>b.observedAt-a.observedAt).slice(0,2).map(r=>({id:r.id,url:r.sources[0],claim:`Ungeprüfter technischer Lösungsansatz, kein Nachfragebeleg: ${r.claim}`,observedAt:new Date(r.observedAt).toISOString()}));if(lessons.length)dependencies.push({sources:lessons});return original({...ctx,dependencies});};}
+ if(!overrides)Object.assign(adapters,createSplitPrivateAdapters({apiKey,getApiKey,mission}));
+ for(const kind of ['private-analysis','private-draft','private-part'])if(adapters[kind]){const original=adapters[kind].execute;adapters[kind].execute=async ctx=>{const k=knowledge.snapshot();const dependencies=ctx.dependencies.map(r=>({...r,sources:admissibleResearchSources(r.sources??[],k)}));if(!dependencies.some(r=>r.sources.length))throw Error('Fresh uncontradicted evidence unavailable');const lessons=k.filter(r=>r.id.startsWith('sofa-')&&!r.stale&&r.verification!=='contradicted').sort((a,b)=>b.observedAt-a.observedAt).slice(0,2).map(r=>({id:r.id,url:r.sources[0],claim:`Ungeprüfter technischer Lösungsansatz, kein Nachfragebeleg: ${r.claim}`,observedAt:new Date(r.observedAt).toISOString()}));return original({...ctx,dependencies:appendPrivateLessons(dependencies,lessons,ctx.task)});};}
  Object.assign(adapters,orderFlow?.adapters??{});
  const controller=openFounderController({file:path.join(directory,'controller.db'),budget,adapters});
  if(activate&&initial&&isEnabled())controller.control('start');
@@ -112,7 +114,7 @@ export function openFounderRuntime({base,directory=path.join(base,'artifacts/fou
      const id=`upload-${d.operationId}`;if(!controller.hasTask(id))controller.enqueue({id,rootTaskId:s.tasks.find(t=>t.id===d.resultId)?.rootTaskId??d.resultId,kind:'drive-output',input:{title:'Geprüfte private Ergebnisversion im numaron-Ordner ablegen',operationId:d.operationId},dependencies:[d.resultId],resources:['drive-output']});
     }
     if(!isEnabled())return;await orderFlow?.refresh({isEnabled});if(!isEnabled())return;orderFlow?.advance(controller);
-    if(!isEnabled())return;await controller.tick();error=null;
+    if(!isEnabled())return;if(!overrides)controller.preparePrivateSplits();await controller.tick();error=null;
    })().catch(e=>{if(overrides)onError?.(e);error='Arbeitsplanung fehlgeschlagen. Gespeicherte Ergebnisse bleiben erhalten.';}).finally(()=>{current=null;});return current;
   },
   startLoop(){if(timer||closed)return;void api.cycle();timer=setInterval(()=>void api.cycle(),10000);},
