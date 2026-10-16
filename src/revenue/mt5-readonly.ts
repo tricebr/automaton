@@ -10,11 +10,13 @@ export interface Mt5ReadOptions {
   terminal: string;
   expectedLogin: number;
   expectedServer: string;
+  expectedTradeMode?: 0;
+  scriptArgs?: string[];
 }
 
 /** Local telemetry only. Intentionally does not implement LiveOrderAdapter. */
 export function validateMt5Snapshot(value: unknown, options: Pick<Mt5ReadOptions,
-  'expectedLogin' | 'expectedServer'>, now = Date.now()) {
+  'expectedLogin' | 'expectedServer' | 'expectedTradeMode'>, now = Date.now()) {
   const v = value as Record<string, any>;
   if (!v || v.schemaVersion !== 1 || v.readOnly !== true || v.executionEnabled !== false)
     throw new Error('Invalid MT5 telemetry envelope');
@@ -24,6 +26,8 @@ export function validateMt5Snapshot(value: unknown, options: Pick<Mt5ReadOptions
   const a = v.account;
   if (!a || a.login !== options.expectedLogin || a.server !== options.expectedServer)
     throw new Error('Unexpected MT5 account or server');
+  if (options.expectedTradeMode === 0 && a.trade_mode !== 0)
+    throw new Error('Required MT5 demo account unavailable');
   if (typeof a.currency !== 'string' || !/^[A-Z]{3}$/.test(a.currency))
     throw new Error('Invalid account currency');
   for (const key of ['balance', 'equity', 'profit', 'margin', 'margin_free', 'leverage'])
@@ -53,7 +57,7 @@ export async function readMt5Account(options: Mt5ReadOptions) {
   try {
     const output = join(folder, 'snapshot.json');
     await promisify(execFile)(options.python, [options.script, '--terminal', options.terminal,
-      '--expected-login', String(options.expectedLogin), '--output', output],
+      '--expected-login', String(options.expectedLogin), '--output', output, ...(options.scriptArgs ?? [])],
     { timeout: 15000, windowsHide: true, maxBuffer: 65536 });
     // Unique file for every attempt: a failed refresh can never return an older file.
     return validateMt5Snapshot(JSON.parse(await readFile(output, 'utf8')), options);

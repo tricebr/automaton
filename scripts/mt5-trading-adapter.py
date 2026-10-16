@@ -3,6 +3,8 @@ import math,time,json,argparse,importlib.util
 from pathlib import Path
 _clock_spec=importlib.util.spec_from_file_location("numaron_readonly_clock",Path(__file__).with_name("mt5-market-readonly.py"))
 _clock_module=importlib.util.module_from_spec(_clock_spec);_clock_spec.loader.exec_module(_clock_module)
+_credit_spec=importlib.util.spec_from_file_location('numaron_demo_credit',Path(__file__).with_name('mt5-demo-credit-proof.py'))
+_credit_module=importlib.util.module_from_spec(_credit_spec);_credit_spec.loader.exec_module(_credit_module)
 from datetime import datetime,timezone,timedelta
 
 def read_cost_terms(symbol):
@@ -101,6 +103,19 @@ def read_day_history(m,window,offset,now_ms,binding=None):
  # time as proof of deal time. Only absence throughout this guard is conclusive.
  day_rows=[r for r in rows if window['startsAt']-14*3600000<=r['rawTime']<=now_ms+14*3600000]
  empty=not day_rows
+ # A broker mail with an opening balance received before this Zurich day can
+ # anchor one exact initial demo credit without guessing its transaction clock.
+ # No general deposit/trading timestamp conversion is implied by this exception.
+ if not empty and binding and binding.get('server')=='AdmiralsGroup-Demo':
+  receipt=_credit_module.load_receipt()
+  if receipt is not None and len(rows)==1:
+   lifetime=m.history_deals_get(datetime(1970,1,1,tzinfo=timezone.utc),end)
+   lifetime_count=m.history_deals_total(datetime(1970,1,1,tzinfo=timezone.utc),end)
+   account=m.account_info();positions=m.positions_get();orders=m.orders_get()
+   if account is not None and lifetime is not None and lifetime_count==len(lifetime)==1 and str(account.login)==binding.get('account') and account.server==binding.get('server') and str(lifetime[0].ticket)==rows[0]['id'] and lifetime[0].time_msc==rows[0]['rawTime']:
+    proof=_credit_module.verify_demo_opening_credit(receipt,account,lifetime,window,now_ms,positions=positions,orders=orders)
+    if proof is not None and _credit_module.verify_demo_opening_credit(receipt,account,deals,window,now_ms,positions=positions,orders=orders) is not None:
+     return {**binding,'complete':True,'windowVerified':True,'cashFlows':[],'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':False,'dayIntervalEmpty':True,'recordCount':len(rows),'timeGuardHours':14,'priorDayCreditProof':proof,'excludedPriorDayRecords':rows,'reason':None}
  return {**(binding or {}),'complete':True,'windowVerified':empty,'cashFlows':[] if empty else rows,'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':not rows,'dayIntervalEmpty':empty,'recordCount':len(rows),'timeGuardHours':14,'reason':None if empty else 'Deal timestamps need separate verification; quote-clock correction is insufficient.'}
 
 def collect_market(m,terminal,login,server,start=0,watch=(),day_window=None):
