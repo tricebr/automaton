@@ -69,6 +69,18 @@ export function researchReport(result){
    bounties.set(m[1],{url:m[1],number:m[1].slice(target.length),title:bounty[2],amount:'USD '+bounty[1],state:state==='closed'?'Geschlossen':state==='open'?'Offen laut Quelle':'Status im Auszug nicht enthalten'});
   }
  }
+ let followUp=null;const f=result.operatorFollowUp;
+ if(f?.schema==='numaron-research-followup-v1'&&f.target===result.target&&Number.isFinite(Date.parse(f.observedAt))&&Date.parse(f.observedAt)>=Date.parse(result.observedAt)){
+  const found=[],date=x=>Number.isFinite(Date.parse(x))?new Date(x).toLocaleString('de-CH',{timeZone:'Europe/Zurich'}):'Datum nicht belegt';
+  if(f.issue?.number===9&&f.issue.url===target+'9'&&f.issue.state==='closed'){
+   found.push('Issue #9 ist geschlossen. Schließgrund: '+String(f.issue.stateReason??'nicht angegeben')+'. Geschlossen am '+date(f.issue.closedAt)+' (Schweizer Zeit).');
+   if(Array.isArray(f.issue.assignees)&&!f.issue.assignees.length)found.push('Issue #9 ist niemandem zugeteilt.');
+   if(bounties.has(f.issue.url))bounties.set(f.issue.url,{...bounties.get(f.issue.url),state:'Geschlossen · nachgeprüft'});
+  }
+  if(f.pr?.number===23&&f.pr.url==='https://github.com/'+result.target+'/pull/23'&&f.pr.merged===true)found.push('PR #23 wurde am '+date(f.pr.mergedAt)+' gemergt. Die technische Übernahme ist belegt; daraus folgt keine bestätigte Bounty-Zahlung.');
+  found.push(...(f.findings??[]).filter(x=>typeof x==='string'));
+  followUp={observedAt:f.observedAt,found,evidence:(f.evidence??[]).filter(e=>publicLink(e.url)).map(e=>({url:publicLink(e.url),label:String(e.label??'Nachprüfungsquelle')}))};
+ }
  const coverage=(result.coverage??[]).map(c=>({...c,title:areas[c.area]??c.area,label:statuses[c.status]??'Nicht geklärt',url:publicLink(c.url),partial:c.partial===true||(result.sources??[]).some(s=>s.url===c.url&&s.truncated===true)}));
  const open=['Zahlung, eigener Vergütungsanspruch und zuständige zahlende Stelle sind mit diesen Quellen nicht nachgewiesen.','Eine Escrow-Finanzierung oder ein verbindlich zugeteilter Auftrag ist nicht nachgewiesen.'];
  if(coverage.some(c=>c.area==='funding'&&c.status==='not_found'))open.push('Die geprüfte Funding-Datei wurde nicht gefunden. Das beweist nicht, dass es keinen anderen Zahlungsweg gibt.');
@@ -83,7 +95,7 @@ export function researchReport(result){
   if(s.url==='https://github.com/'+result.target+'/issues')text=[...bounties.values()].map(b=>`Issue #${b.number}: ${b.amount} ausgeschrieben · ${b.title} · ${b.state}`).join('\n')||'Begrenzte Issue-Auszüge gespeichert. Keine eindeutig zuordenbare Bounty-Ausschreibung aus dem Auszug aufbereitet.';
   return {url:publicLink(s.url),title:coverage.find(c=>c.url===s.url)?.title??'Öffentliche Quelle',text,truncated:s.truncated===true};
  });
- return {target:result.target,goal:result.researchGoal??'',observedAt:result.observedAt,summary:'Die Quellenprüfung ist abgeschlossen. Vergütung, Zahlung und Escrow sind dadurch nicht bestätigt.',found,open,coverage,bounties:[...bounties.values()],bountyNote:bounties.size?'Genannte Beträge sind Ausschreibungen, keine Zahlungszusage an numaron. Geschlossene Issues sind keine neuen offenen Aufträge.':'Im gespeicherten Auszug wurde keine eindeutig zuordenbare Bounty-Ausschreibung aufbereitet; das ist kein Nachweis, dass es keine gibt.',sources};
+ return {target:result.target,goal:result.researchGoal??'',observedAt:result.observedAt,followUp,summary:'Die Quellenprüfung ist abgeschlossen. Vergütung, Zahlung und Escrow sind dadurch nicht bestätigt.',found,open,coverage,bounties:[...bounties.values()],bountyNote:bounties.size?'Genannte Beträge sind Ausschreibungen, keine Zahlungszusage an numaron. Geschlossene Issues sind keine neuen offenen Aufträge.':'Im gespeicherten Auszug wurde keine eindeutig zuordenbare Bounty-Ausschreibung aufbereitet; das ist kein Nachweis, dass es keine gibt.',sources};
 }
 
 export function renderResearchReport(result,doc=document){
@@ -95,6 +107,7 @@ export function renderResearchReport(result,doc=document){
  root.append(node('p',r.target,'eyebrow'),node('p',r.summary,'research-summary'));
  const date=Date.parse(r.observedAt);if(Number.isFinite(date))root.append(node('p','Quellenstand: '+new Date(date).toLocaleString('de-CH',{timeZone:'Europe/Zurich'})+' · Schweizer Zeit','muted'));
  if(r.goal)root.append(node('p','Auftrag: '+r.goal));
+ if(r.followUp){section('Aktuelle Nachprüfung · '+new Date(r.followUp.observedAt).toLocaleString('de-CH',{timeZone:'Europe/Zurich'}),r.followUp.found);const refs=node('p');for(const e of r.followUp.evidence)refs.append(link(e.label+' ↗',e.url),node('span',' · '));root.append(refs);}
  const hints=node('section');hints.append(node('h3','Gefundene Bounty-Hinweise'),node('p',r.bountyNote));
  for(const b of r.bounties){const card=node('article',undefined,'research-bounty');card.append(node('strong',b.amount+' ausgeschrieben'),node('span',b.state,'research-badge'),link('Issue #'+b.number+' · '+b.title,b.url));hints.append(card);}root.append(hints);
  section('Was gefunden und geprüft wurde',r.found);section('Was noch offen ist',r.open);
