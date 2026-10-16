@@ -24,7 +24,15 @@ export function assertPublicEndpoint(raw: string): URL {
   const gh = url.hostname === "api.github.com" && url.pathname === "/search/issues" &&
     new Set(url.searchParams.keys()).size === [...url.searchParams.keys()].length &&
     [...url.searchParams.keys()].every(k => ["q", "sort", "order", "per_page"].includes(k));
-  if (!hn && !gh && !isDiverseEndpoint(url)) throw new Error("Public endpoint rejected");
+  // Fixed, anonymous repository research surfaces. No arbitrary content paths,
+  // searches, pagination, raw download hosts or URLs returned by source text.
+  const part='[A-Za-z0-9_-]+',repo='[A-Za-z0-9_.-]+';
+  const base=`/repos/${part}/${repo}`;
+  const repository=url.hostname==='api.github.com'&&!url.pathname.includes('..')&&(
+    !url.search&&(new RegExp(`^${base}(?:/readme|/contents/(?:CONTRIBUTING\\.md|\\.github/CONTRIBUTING\\.md|docs/CONTRIBUTING\\.md|\\.github/FUNDING\\.yml|profile/README\\.md))?$`).test(url.pathname)||new RegExp(`^/users/${part}$`).test(url.pathname))||
+    new RegExp(`^${base}/issues$`).test(url.pathname)&&url.search==='?state=all&sort=updated&direction=desc&per_page=30');
+  const discussions=url.hostname==='github.com'&&!url.search&&!url.pathname.includes('..')&&new RegExp(`^/${part}/${repo}/discussions$`).test(url.pathname);
+  if (!hn && !gh && !repository && !discussions && !isDiverseEndpoint(url)) throw new Error("Public endpoint rejected");
   return url;
 }
 export function validateTopic(topic: string): string {
@@ -32,7 +40,7 @@ export function validateTopic(topic: string): string {
   return topic.trim().replace(/\s+/g, " ");
 }
 /** Fixed public GET endpoints, no credentials/cookies, no redirect, bounded body/time. */
-export async function publicJson(db: Database, raw: string, signal: AbortSignal, request: PublicFetch = fetch, reserved?: (id:number|bigint)=>void, decode:(text:string)=>unknown=JSON.parse): Promise<unknown> {
+export async function publicJson(db: Database, raw: string, signal: AbortSignal, request: PublicFetch = fetch, reserved?: (id:number|bigint)=>void, decode:(text:string)=>unknown=JSON.parse, options:{allowNotFound?:boolean}={}): Promise<unknown> {
   const url = assertPublicEndpoint(raw);
   if (signal.aborted) throw new Error("Public read cancelled");
   const requestId = db.transaction(() => {
@@ -49,7 +57,16 @@ export async function publicJson(db: Database, raw: string, signal: AbortSignal,
     reserved?.(requestId);
     const response = await abortable(request(url, { method: "GET", redirect: "error", credentials: "omit", signal: combined,
       headers: { Accept: "application/json", "User-Agent": "Obolus-Public-Research/1.0" } }),combined);
-    if (!response.ok || response.redirected) throw new Error("Public source unavailable or rate limited");
+    if(response.status===404&&options.allowNotFound&&!response.redirected&&!response.headers.has('retry-after')){
+      await response.body?.cancel();
+      db.prepare("UPDATE online_requests SET status='received' WHERE id=?").run(requestId);
+      return null;
+    }
+    if (!response.ok || response.redirected || response.headers.has('retry-after')){
+      const retry=response.headers.get('retry-after'),delay=retry&&/^\d+$/.test(retry)?Number(retry)*1000:retry?Date.parse(retry)-Date.now():0;
+      await response.body?.cancel();
+      throw Object.assign(new Error("Public source unavailable or rate limited"),{diagnostic:{httpStatus:response.status,retryAfterMs:Number.isSafeInteger(delay)&&delay>0?delay:0}});
+    }
     const declared = Number(response.headers.get("content-length") || 0);
     if (declared > SOURCE_LIMITS.responseBytes || !response.body) throw new Error("Public response exceeds limit or is empty");
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
@@ -66,9 +83,9 @@ export async function publicJson(db: Database, raw: string, signal: AbortSignal,
     if (combined.aborted) throw new Error("Public read cancelled");
     db.prepare("UPDATE online_requests SET status='received',bytes=? WHERE id=?").run(total, requestId);
     return data;
-  } catch {
+  } catch(error) {
     db.prepare("UPDATE online_requests SET status='failed' WHERE id=?").run(requestId);
-    throw new Error(combined.aborted ? "Public read cancelled or timed out" : "Public source failed; no automatic retry");
+    throw Object.assign(new Error(combined.aborted ? "Public read cancelled or timed out" : "Public source failed; no automatic retry"),{diagnostic:(error as {diagnostic?:unknown})?.diagnostic});
   } finally { clearTimeout(timer); }
 }
 const plain = (input: unknown) => typeof input === "string" ? input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 3500) : "";

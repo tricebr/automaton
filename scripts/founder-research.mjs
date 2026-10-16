@@ -3,14 +3,30 @@ import path from 'node:path';
 import {openOnline} from '../src/online/workspace.ts';
 import {researchSchedule} from '../src/online/scheduler.ts';
 import {improvementResearchSchedule} from '../src/revenue/proactive-research.ts';
-export function createFounderResearch({directory,request}) {
+import {createTargetedResearch,specificResearch} from './founder-targeted-research.mjs';
+export function createFounderResearch({directory,request,now=()=>Date.now()}) {
  const file=path.join(directory,'research.db');
  const online=openOnline(fs.existsSync(file)?{resume:file,request}:{directory,request});
  online.runtime.configureAutonomy(true);
+ const targeted=createTargetedResearch({db:online.database.raw,request,now});
  let interruptedJob=null;
- return {available:true,maxCostRappen:0,retrySafe:true,
-  get nextReadyAt(){if(interruptedJob!==null)return 0;const primary=researchSchedule(online.database.raw),s=primary.reason==='cooldown_or_review'?improvementResearchSchedule(online.database.raw):primary;return s.topic||s.reason==='queued_work'?0:Date.now()+60000;},
-  async execute({signal,assertActive}) {
+ return {available:true,maxCostRappen:0,retrySafe:true,autoRetrySafe:true,
+  get waitState(){
+   if(interruptedJob!==null)return null;
+   const db=online.database.raw,primary=researchSchedule(db),s=primary.reason==='cooldown_or_review'?improvementResearchSchedule(db):primary;
+   if(s.topic||s.reason==='queued_work')return null;
+   const cooldown=['cooldown_or_review','improvement_cooldown'].includes(s.reason);
+   const labels={source_quota:'Das Abruflimit für öffentliche Quellen ist erreicht.',evidence_capacity_review:'Gespeicherte Quellen müssen geprüft werden.',opportunity_capacity_review:'Gespeicherte Chancen müssen geprüft werden.',research_capacity_review:'Gespeicherte Rechercheergebnisse müssen geprüft werden.',improvement_history_review:'Die bisherigen Methodenversuche müssen geprüft werden.',improvement_review_required:'Keine weitere geprüfte Methodenrecherche freigegeben.',initial_market_research_first:'Zuerst muss die Grundlagenrecherche abgeschlossen werden.'};
+   const row=cooldown?db.prepare("SELECT MIN(unixepoch(created_at)*1000+86400000) at FROM online_jobs WHERE status='done' AND unixepoch(created_at)*1000+86400000>?").get(Date.now()):null;
+   // Review is a condition, never a promised start one minute from now.
+   return {code:s.reason,reason:cooldown?'Die Recherche hält ihre 24-Stunden-Pause ein; ein Start erfolgt erst bei freigegebenem Thema.':labels[s.reason]??'Quellenprüfung erforderlich.',until:null,earliestReviewAt:row?.at??null,checkAt:Date.now()+60000};
+  },
+  get nextReadyAt(){const w=this.waitState;return w?Math.min(w.until??Infinity,w.checkAt):0;},
+  waitStateFor(ctx){return specificResearch(ctx)?targeted.waitState(ctx):this.waitState;},
+  nextReadyAtFor(ctx){const w=this.waitStateFor(ctx);return w?(w.until??w.checkAt??Infinity):0;},
+  async execute(ctx) {
+   if(specificResearch(ctx))return targeted.execute(ctx);
+   const {signal,assertActive}=ctx;
    assertActive();if(signal.aborted)throw Error('Stopped');
    const runtime=online.runtime;
    if(runtime.status==='paused')runtime.control('resume');else if(runtime.status==='stopped')runtime.control('start');

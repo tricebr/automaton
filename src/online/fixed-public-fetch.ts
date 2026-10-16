@@ -43,6 +43,11 @@ export const fixedPublicFetch:PublicFetch=async(input,init)=>{
      finish(undefined,new Response(null,{status,headers:{'retry-after':typeof retry==='string'&&retry.length<=200?retry:'invalid'}}));
      response.destroy();request?.destroy();return;
     }
+    // Optional public files may be absent. Let the caller distinguish absence,
+    // authentication restrictions and rate limits, without exposing error bodies.
+    if(status>=400&&status<=599){
+     finish(undefined,new Response(null,{status}));response.destroy();request?.destroy();return;
+    }
     if(status!==200||!Number.isFinite(declared)||declared<0||declared>SOURCE_LIMITS.responseBytes){response.destroy();request?.destroy();finish(new Error('Response rejected'));return;}
     const chunks:Buffer[]=[];let bytes=0;
     response.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>SOURCE_LIMITS.responseBytes){response.destroy();request?.destroy();finish(new Error('Body limit'));}else chunks.push(chunk);});
