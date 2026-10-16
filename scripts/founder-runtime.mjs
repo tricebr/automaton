@@ -1,3 +1,5 @@
+import os from 'node:os';
+import {createLocalAccessCache,readLocalCredential} from './founder-local-access.mjs';
 import {founderMethods,pluginReadiness} from './founder-methods.mjs';
 import fs from 'node:fs';import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -14,7 +16,6 @@ import {createFounderPlanner,validatePlan} from './founder-planner.mjs';
 import {openFounderOrders} from './founder-orders.mjs';
 import {loadOwnOrderRegistry} from './founder-order-registry.mjs';
 import {createServiceReaders} from './founder-service-readers.mjs';
-import {readServiceAccess} from './founder-service-access.mjs';
 import {openFounderDelivery} from './founder-delivery.mjs';
 import Database from 'better-sqlite3';
 import {createGoogleAccessManager} from './founder-google-access.mjs';
@@ -25,9 +26,11 @@ export function openFounderRuntime({base,directory=path.join(base,'artifacts/fou
  const budget=openFounderBudget(path.join(directory,'budget.db')),knowledge=openFounderKnowledge(path.join(directory,'knowledge.db'));
  const orders=openFounderOrders(path.join(directory,'orders.db')),registry=loadOwnOrderRegistry(base);for(const r of registry)orders.register(r);
  const workflow=new Database(path.join(directory,'workflow.db'));workflow.pragma('journal_mode=WAL');workflow.exec('CREATE TABLE IF NOT EXISTS decisions(id TEXT PRIMARY KEY,payload TEXT NOT NULL,at INTEGER NOT NULL)');
- const googleAccess=overrides?null:createGoogleAccessManager();
+ const googleAccess=overrides?null:createGoogleAccessManager({isActive:()=>isEnabled()&&controller.controlState().status==='running'});
+ const localDirectory=path.join(process.env.LOCALAPPDATA??path.join(os.homedir(),'AppData/Local'),'Numaron');
+ const amplitudeAccess=overrides?null:createLocalAccessCache({file:path.join(localDirectory,'amplitude-access.dpapi'),read:()=>readLocalCredential('service',{provider:'amplitude',directory:localDirectory})});
  const delivery=openFounderDelivery({directory:path.join(directory,'deliveries'),access:()=>googleAccess?.current()??{available:false}});
- const readers=overrides?null:createServiceReaders({directory:path.join(directory,'services'),registry,access:kind=>kind==='amplitude-metrics'?readServiceAccess('amplitude'):googleAccess.current()});
+ const readers=overrides?null:createServiceReaders({directory:path.join(directory,'services'),registry,access:kind=>kind==='amplitude-metrics'?amplitudeAccess.current():googleAccess.current()});
  const initial=!budget.snapshot().startAt;
  if(activate&&initial)budget.activate({startAt:Date.now(),authorizationRef:'patrice:2026-10-15:CHF150-30days:CHF20-day:CHF2.50-task'});
  const research=overrides?null:createFounderResearch({directory:path.join(directory,'research')});
@@ -65,8 +68,8 @@ export function openFounderRuntime({base,directory=path.join(base,'artifacts/fou
   async cycle(){
    if(closed||!isEnabled())return;if(current)return current;
    current=(async()=>{
-    const s=controller.snapshot();if(s.status!=='running'||!s.budget.active)return;
-    await googleAccess?.refresh();if(!isEnabled()||controller.snapshot().status!=='running')return;s.tasks=controller.planningHistory();
+    let s=controller.snapshot();if(s.status!=='running'||!s.budget.active)return;
+    await Promise.all([googleAccess?.refresh(),amplitudeAccess?.refresh()]);if(!isEnabled()||controller.controlState().status!=='running')return;s=controller.snapshot();s.tasks=controller.planningHistory();
     for(const task of planFounderWork({completed:s.tasks.map(t=>t.id),capabilities:s.capabilities,observations:s.tasks,budget:s.budget,knowledge:knowledge.snapshot()}))if(!controller.hasTask(task.id))controller.enqueue(task);
     const known=new Set(knowledge.snapshot().map(k=>k.id));
     for(const t of s.tasks.filter(t=>t.status==='done'&&['research','exa-research','firecrawl-research','sofa-research','github-orders'].includes(t.kind))){

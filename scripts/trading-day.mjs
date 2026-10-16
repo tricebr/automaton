@@ -7,7 +7,9 @@ export function openTradingDay(file){
  return {observe(m,now=Date.now()){
   const p=zurichDay(now),a=m?.account;
   const invalid=reason=>({...p,account:a?.identity,server:a?.server,currency:a?.currency,verified:false,reason});
-  if(!a?.identity||!a.server||!a.currency||!(a.equity>0)||!Number.isFinite(a.observedAt)||now-a.observedAt>1000||a.observedAt>now)return invalid('Aktuelle kontogebundene Equity fehlt.');
+  if(!a?.identity||!a.server||!a.currency||!Number.isFinite(a.equity)||!(a.equity>0)||!Number.isFinite(a.observedAt))return invalid('Aktuelle kontogebundene Equity fehlt.');
+  if(a.observedAt>now)return invalid('Zeitstempel der Kontoaufnahme liegt in der Zukunft.');
+  if(now-a.observedAt>1000)return invalid('Kontoaufnahme beim Tagesabgleich veraltet; neue vollständige Brokeraufnahme erforderlich.');
   if(!Array.isArray(m.cashFlows)||m.flowWindow?.startsAt!==p.startsAt||m.flowWindow?.endsAt!==p.endsAt||m.cashFlows.some(x=>!x||!['external','trading'].includes(x.kind)||!Number.isFinite(x.amount)))return invalid('Vollständige Geldbewegungen fehlen.');
   const key=[a.identity,a.server,a.currency,p.startsAt],get=()=>db.prepare('SELECT * FROM trading_days_v2 WHERE account=? AND server=? AND currency=? AND starts=?').get(...key);
   let row=get();const h=m.dayHistory;

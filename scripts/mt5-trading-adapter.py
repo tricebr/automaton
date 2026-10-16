@@ -1,5 +1,5 @@
 """Account-bound MT5 adapter. CLI exposes readonly collection only; execution requires explicit in-process authorization."""
-import math,time,json,argparse,importlib.util
+import math,time,json,argparse,importlib.util,hashlib
 from pathlib import Path
 _clock_spec=importlib.util.spec_from_file_location("numaron_readonly_clock",Path(__file__).with_name("mt5-market-readonly.py"))
 _clock_module=importlib.util.module_from_spec(_clock_spec);_clock_spec.loader.exec_module(_clock_module)
@@ -81,7 +81,11 @@ def read_watch_quotes(m,names,offset):
   rows.append({'symbol':name,'bid':tick.bid,'ask':tick.ask,'quoteAt':tick.time_msc-offset*1000,'rawQuoteAt':tick.time_msc,'clockOffsetSeconds':offset})
  return rows
 
-def read_day_history(m,window,offset,now_ms,binding=None):
+def _history_record_digest(d):
+ return hashlib.sha256(json.dumps([d.ticket,d.type,d.time_msc,d.profit,d.commission,d.swap,getattr(d,'fee',0),d.symbol,getattr(d,'comment','')],ensure_ascii=True).encode()).hexdigest()
+
+
+def _read_day_history_once(m,window,offset,now_ms,binding=None):
  """Collect a deliberately wider interval; quote clock is not proof of deal clock."""
  failed={'complete':False,'windowVerified':False,'cashFlows':None,'reason':'Broker history incomplete or unclassified.'}
  if not window or not all(isinstance(window.get(k),(int,float)) and math.isfinite(window[k]) for k in ['startsAt','endsAt']):return failed
@@ -89,7 +93,8 @@ def read_day_history(m,window,offset,now_ms,binding=None):
  begin=datetime(1970,1,1,tzinfo=timezone.utc)+timedelta(milliseconds=window['startsAt']-86400000)
  end=datetime(1970,1,1,tzinfo=timezone.utc)+timedelta(milliseconds=now_ms+86400000)
  deals=m.history_deals_get(begin,end);count=m.history_deals_total(begin,end)
- if deals is None or count is None or count!=len(deals):return failed
+ if deals is None:return {**failed,'reasonCode':'history-read-unavailable','retryableHistory':count in (None,0)}
+ if count is None or count!=len(deals):return {**failed,'reasonCode':'history-count-mismatch','retryableHistory':len(deals)==0,'minimumRecordCount':count if isinstance(count,int) and count>0 else 0}
  rows=[];ids=set()
  for d in deals:
   values=[d.profit,d.commission,d.swap,getattr(d,'fee',0),d.time_msc]
@@ -99,6 +104,8 @@ def read_day_history(m,window,offset,now_ms,binding=None):
   if kind is None:return failed
   if kind=='external' and (d.commission or d.swap or getattr(d,'fee',0)):return failed
   rows.append({'id':str(d.ticket),'kind':kind,'amount':sum(values[:4]),'rawTime':d.time_msc,'estimatedTime':d.time_msc-offset*1000,'symbol':d.symbol,'commission':d.commission,'swap':d.swap,'fee':getattr(d,'fee',0)})
+ digests=[_history_record_digest(d) for d in deals]
+ failed['observedRecordDigests']=digests
  # A 14-hour guard covers UTC and civil server offsets without treating quote
  # time as proof of deal time. Only absence throughout this guard is conclusive.
  day_rows=[r for r in rows if window['startsAt']-14*3600000<=r['rawTime']<=now_ms+14*3600000]
@@ -108,15 +115,34 @@ def read_day_history(m,window,offset,now_ms,binding=None):
  # No general deposit/trading timestamp conversion is implied by this exception.
  if not empty and binding and binding.get('server')=='AdmiralsGroup-Demo':
   receipt=_credit_module.load_receipt()
+  if receipt is None:return {**failed,'reasonCode':'opening-credit-receipt-unavailable','reason':'Beleg der Demo-Startgutschrift derzeit nicht lesbar oder ungültig.'}
   if receipt is not None and len(rows)==1:
    lifetime=m.history_deals_get(datetime(1970,1,1,tzinfo=timezone.utc),end)
    lifetime_count=m.history_deals_total(datetime(1970,1,1,tzinfo=timezone.utc),end)
+   if (lifetime is not None and len(lifetime)>1) or (isinstance(lifetime_count,int) and lifetime_count>1):return {**failed,'reasonCode':'opening-credit-additional-deals','reason':'Weitere Buchungen in der vollständigen Historie; Startgutschrift allein genügt nicht.'}
+   if lifetime is None or len(lifetime)==0:return {**failed,'reasonCode':'opening-credit-lifetime-incomplete','retryableHistory':True,'reason':'Vollständige Brokerhistorie vorübergehend nicht konsistent lesbar.'}
+   if lifetime_count!=len(lifetime):return {**failed,'reasonCode':'opening-credit-lifetime-count-mismatch','reason':'Anzahl und Inhalte der vollständigen Brokerhistorie widersprechen sich.'}
+   if _history_record_digest(lifetime[0])!=digests[0]:return {**failed,'reasonCode':'opening-credit-history-conflict','reason':'Tageszeitraum und vollständige Historie melden unterschiedliche Buchungsinhalte.'}
    account=m.account_info();positions=m.positions_get();orders=m.orders_get()
+   if account is None or positions is None or orders is None:return {**failed,'reasonCode':'opening-credit-account-incomplete','retryableHistory':True,'reason':'Kontobestand während des Historienabgleichs unvollständig.'}
    if account is not None and lifetime is not None and lifetime_count==len(lifetime)==1 and str(account.login)==binding.get('account') and account.server==binding.get('server') and str(lifetime[0].ticket)==rows[0]['id'] and lifetime[0].time_msc==rows[0]['rawTime']:
     proof=_credit_module.verify_demo_opening_credit(receipt,account,lifetime,window,now_ms,positions=positions,orders=orders)
     if proof is not None and _credit_module.verify_demo_opening_credit(receipt,account,deals,window,now_ms,positions=positions,orders=orders) is not None:
-     return {**binding,'complete':True,'windowVerified':True,'cashFlows':[],'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':False,'dayIntervalEmpty':True,'recordCount':len(rows),'timeGuardHours':14,'priorDayCreditProof':proof,'excludedPriorDayRecords':rows,'reason':None}
- return {**(binding or {}),'complete':True,'windowVerified':empty,'cashFlows':[] if empty else rows,'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':not rows,'dayIntervalEmpty':empty,'recordCount':len(rows),'timeGuardHours':14,'reason':None if empty else 'Deal timestamps need separate verification; quote-clock correction is insufficient.'}
+     return {**binding,'complete':True,'windowVerified':True,'cashFlows':[],'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':False,'dayIntervalEmpty':True,'recordCount':len(rows),'observedRecordDigests':digests,'timeGuardHours':14,'priorDayCreditProof':proof,'excludedPriorDayRecords':rows,'reason':None}
+ return {**(binding or {}),'complete':True,'windowVerified':empty,'cashFlows':[] if empty else rows,'flowWindow':window,'source':'MT5 history_deals_get + history_deals_total','observedAt':now_ms,'wideIntervalEmpty':not rows,'dayIntervalEmpty':empty,'recordCount':len(rows),'timeGuardHours':14,'reasonCode':None if empty else 'opening-credit-evidence-rejected','reason':None if empty else 'Buchungshistorie oder Startgutschrift nicht vollständig bestätigt; Beleg, Kontobestand und Buchungsdaten müssen übereinstimmen.'}
+
+def read_day_history(m,window,offset,now_ms,binding=None):
+ """Retry a transient incomplete read once; never reuse a prior verified result."""
+ previous=None;seen=set();minimum=0
+ for attempt in (1,2):
+  result=_read_day_history_once(m,window,offset,now_ms,binding)
+  result['historyReadAttempts']=attempt
+  if result.get('windowVerified') and (not seen.issubset(set(result.get('observedRecordDigests',[]))) or result.get('recordCount',0)<minimum):return {'complete':False,'windowVerified':False,'cashFlows':None,'historyReadAttempts':attempt,'reasonCode':'history-records-changed-during-retry','reason':'Bereits beobachtete Buchungen fehlen oder unterscheiden sich beim erneuten Historienabgleich.'}
+  seen.update(result.get('observedRecordDigests',[]));minimum=max(minimum,result.get('minimumRecordCount',0))
+  if previous is not None:result['retriedAfter']=previous
+  if not result.get('retryableHistory') or attempt==2:return result
+  previous=result.get('reasonCode')
+
 
 def collect_market(m,terminal,login,server,start=0,watch=(),day_window=None):
  if not m.initialize(terminal,timeout=10000):raise RuntimeError('MT5 initialization failed')
