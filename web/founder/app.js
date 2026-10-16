@@ -2,7 +2,7 @@ import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs'
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
 import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck, runtimeHealth, capabilityStatus, taskWaitText, codeCapability} from './model.mjs';
 
-import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,rememberDraft,explainTerm,renderFounderArchive} from './interaction.mjs';
+import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,rememberDraft,explainTerm,renderFounderArchive,renderResearchReport} from './interaction.mjs';
 
 import {renderTradingEngine,renderTradeHighlight} from './trading.mjs';
 
@@ -61,7 +61,7 @@ const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefine
 
 
 
-function showDocument(title,text){const dialog=el('dialog',undefined,'document-dialog'),bar=el('div',undefined,'section-heading'),close=el('button','Schließen ×');dialog.setAttribute('aria-label',title);bar.append(el('h2',title),close);dialog.append(bar,el('p','Zum Schließen: daneben klicken oder Escape drücken.','dialog-hint'),el('pre',text));close.onclick=()=>dialog.close();let startedOutside=false;dialog.addEventListener('pointerdown',event=>{startedOutside=event.target===dialog&&outsideDialog(event.clientX,event.clientY,dialog.getBoundingClientRect());});dialog.addEventListener('click',event=>{if(startedOutside&&event.target===dialog&&outsideDialog(event.clientX,event.clientY,dialog.getBoundingClientRect()))dialog.close();startedOutside=false;});dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();}
+function showDocument(title,text){const dialog=el('dialog',undefined,'document-dialog'),bar=el('div',undefined,'section-heading'),close=el('button','Schließen ×');dialog.setAttribute('aria-label',title);bar.append(el('h2',title),close);dialog.append(bar,el('p','Zum Schließen: daneben klicken oder Escape drücken.','dialog-hint'),typeof text==='string'?el('pre',text):text);close.onclick=()=>dialog.close();let startedOutside=false;dialog.addEventListener('pointerdown',event=>{startedOutside=event.target===dialog&&outsideDialog(event.clientX,event.clientY,dialog.getBoundingClientRect());});dialog.addEventListener('click',event=>{if(startedOutside&&event.target===dialog&&outsideDialog(event.clientX,event.clientY,dialog.getBoundingClientRect()))dialog.close();startedOutside=false;});dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();}
 
 
 
@@ -800,7 +800,7 @@ function taskPanel(t){
 
 }
 
-async function openJob(t){try{const result=await api('/api/results/'+encodeURIComponent(t.id));const a=result.analysis;showDocument(taskTitle(t),a?.deliverableMarkdown??(a?[(a.summary??''),'Nächster Schritt: '+(a.nextStep??''),'Grenzen: '+(a.limitations??[]).join(' · '),'Quellen: '+(result.sources??[]).map(s=>s.url).join('\n')].join('\n\n'):result.text??result.content??JSON.stringify(result,null,2)));}catch(e){$('error').textContent=e.message;}}
+async function openJob(t){try{const result=await api('/api/results/'+encodeURIComponent(t.id));const report=renderResearchReport(result);if(report){showDocument(result.target+' - Recherche-Ergebnisse',report);return;}const a=result.analysis;showDocument(taskTitle(t),a?.deliverableMarkdown??(a?[(a.summary??''),'Nächster Schritt: '+(a.nextStep??''),'Grenzen: '+(a.limitations??[]).join(' · '),'Quellen: '+(result.sources??[]).map(s=>s.url).join('\n')].join('\n\n'):result.text??result.content??JSON.stringify(result,null,2)));}catch(e){$('error').textContent=e.message;}}
 
 function resultPanel(t){const panel=el('article',undefined,'card');panel.dataset.kind='Arbeit';panel.dataset.search=taskTitle(t).toLocaleLowerCase('de');panel.append(el('span',kindLabels[t.kind]??'Arbeitsergebnis','eyebrow'),el('h3',taskTitle(t)),el('p','Ergebnis gespeichert · '+new Date(t.updated_ms).toLocaleString('de-CH',{timeZone:'Europe/Zurich'})));const button=el('button','Ergebnis öffnen');button.onclick=()=>openJob(t);panel.append(button);return panel;}
 

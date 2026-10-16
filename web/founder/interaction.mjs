@@ -49,3 +49,56 @@ export function renderFounderArchive(box,state,actions){
  if(state.total===0&&!state.error)box.append(el('p','Noch keine abgeschlossenen Arbeiten vorhanden.'));
  if(state.nextCursor){const more=el('button','Weitere laden');more.disabled=state.loading;more.onclick=actions.more;box.append(more);}
 }
+
+// Read-only presentation of bounded repository research.
+const areas={repository:'Projekt',readme:'README · Projektbeschreibung',contributing:'CONTRIBUTING · Beitragsregeln',funding:'Funding-Datei',issues:'Issues und Pull Requests',discussions:'Discussions',organisation:'Öffentliches Organisationsprofil','organisation-readme':'Organisations-README'};
+const statuses={observed:'Abgerufen',not_found:'Nicht gefunden',disabled:'Deaktiviert'};
+const publicLink=value=>{try{const u=new URL(value);return u.protocol==='https:'&&u.hostname==='github.com'&&!u.username&&!u.password&&!u.port?u.href:null;}catch{return null;}};
+const plain=value=>String(value??'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/(?:^|\s)#{1,6}\s/g,'\n').replace(/\*\*|```|`/g,'').trim();
+export function researchReport(result){
+ if(result?.kind!=='research'||typeof result.target!=='string')return null;
+ const bounties=new Map(),target='https://github.com/'+result.target+'/issues/';
+ for(const s of result.sources??[]){
+  if(s.url!=='https://github.com/'+result.target+'/issues')continue;
+  const claim=String(s.claim??''),records=[...claim.matchAll(/"url"\s*:\s*"([^"\s]+)"\s*,\s*"title"\s*:\s*"((?:\\.|[^"\\])*)"/g)];
+  for(let i=0;i<records.length;i++){
+   const m=records[i];if(!m[1].startsWith(target)||!/^\d+$/.test(m[1].slice(target.length))||!publicLink(m[1]))continue;
+   let title;try{title=JSON.parse('"'+m[2]+'"');}catch{continue;}
+   const bounty=title.match(/^\[Bounty:\s*\$(\d+(?:\.\d+)?)\]\s*(.+)$/i);if(!bounty)continue;
+   const tail=claim.slice(m.index+m[0].length,records[i+1]?.index??claim.length),state=tail.match(/"state"\s*:\s*"(open|closed)"/)?.[1];
+   bounties.set(m[1],{url:m[1],number:m[1].slice(target.length),title:bounty[2],amount:'USD '+bounty[1],state:state==='closed'?'Geschlossen':state==='open'?'Offen laut Quelle':'Status im Auszug nicht enthalten'});
+  }
+ }
+ const coverage=(result.coverage??[]).map(c=>({...c,title:areas[c.area]??c.area,label:statuses[c.status]??'Nicht geklärt',url:publicLink(c.url),partial:c.partial===true||(result.sources??[]).some(s=>s.url===c.url&&s.truncated===true)}));
+ const open=['Zahlung, eigener Vergütungsanspruch und zuständige zahlende Stelle sind mit diesen Quellen nicht nachgewiesen.','Eine Escrow-Finanzierung oder ein verbindlich zugeteilter Auftrag ist nicht nachgewiesen.'];
+ if(coverage.some(c=>c.area==='funding'&&c.status==='not_found'))open.push('Die geprüfte Funding-Datei wurde nicht gefunden. Das beweist nicht, dass es keinen anderen Zahlungsweg gibt.');
+ if(coverage.some(c=>c.area==='discussions'&&c.status==='disabled'))open.push('Discussions sind laut Projektangaben deaktiviert; dort wurden keine Beiträge geprüft.');
+ if((result.sources??[]).some(s=>s.truncated))open.push('Längere Quelltexte sind gekürzt gespeichert; einzelne Bedingungen können im Auszug fehlen.');
+ if(result.checks?.coverageComplete!==true)open.push('Die Abdeckung ist begrenzt: Issues wurden nur in einer begrenzten Auswahl geprüft. Fehlende Hinweise sind kein Beleg für deren Nichtexistenz.');
+ const found=coverage.filter(c=>c.status==='observed').map(c=>c.title+': abgerufen'+(c.partial?' · begrenzter Auszug oder Auswahl.':'.'));
+ const rules=(result.sources??[]).find(s=>s.url?.includes('/CONTRIBUTING.md'))?.claim??'';
+ if(/python -m pytest/.test(rules)&&/one issue/i.test(rules))found.push('Die Beitragsregeln verlangen Python-Tests und einen auf ein Issue begrenzten Beitrag. Eine Vergütungszusage ergibt sich daraus nicht.');
+ const sources=(result.sources??[]).filter(s=>publicLink(s.url)).map(s=>{
+  let text=plain(s.claim);try{const parsed=JSON.parse(s.claim);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))text=parsed.description??parsed.bio??'Öffentliches Profil abgerufen; im gespeicherten Datensatz keine zusätzliche Beschreibung.';}catch{}
+  if(s.url==='https://github.com/'+result.target+'/issues')text=[...bounties.values()].map(b=>`Issue #${b.number}: ${b.amount} ausgeschrieben · ${b.title} · ${b.state}`).join('\n')||'Begrenzte Issue-Auszüge gespeichert. Keine eindeutig zuordenbare Bounty-Ausschreibung aus dem Auszug aufbereitet.';
+  return {url:publicLink(s.url),title:coverage.find(c=>c.url===s.url)?.title??'Öffentliche Quelle',text,truncated:s.truncated===true};
+ });
+ return {target:result.target,goal:result.researchGoal??'',observedAt:result.observedAt,summary:'Die Quellenprüfung ist abgeschlossen. Vergütung, Zahlung und Escrow sind dadurch nicht bestätigt.',found,open,coverage,bounties:[...bounties.values()],bountyNote:bounties.size?'Genannte Beträge sind Ausschreibungen, keine Zahlungszusage an numaron. Geschlossene Issues sind keine neuen offenen Aufträge.':'Im gespeicherten Auszug wurde keine eindeutig zuordenbare Bounty-Ausschreibung aufbereitet; das ist kein Nachweis, dass es keine gibt.',sources};
+}
+
+export function renderResearchReport(result,doc=document){
+ const r=researchReport(result);if(!r)return null;
+ const node=(tag,text,cls)=>{const e=doc.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ const root=node('div',undefined,'research-report');
+ const link=(label,url)=>{const e=node('a',label);e.href=url;e.target='_blank';e.rel='noopener noreferrer';return e;};
+ const section=(title,texts)=>{const s=node('section');s.append(node('h3',title));const list=node('ul');for(const text of texts)list.append(node('li',text));s.append(list);root.append(s);};
+ root.append(node('p',r.target,'eyebrow'),node('p',r.summary,'research-summary'));
+ const date=Date.parse(r.observedAt);if(Number.isFinite(date))root.append(node('p','Quellenstand: '+new Date(date).toLocaleString('de-CH',{timeZone:'Europe/Zurich'})+' · Schweizer Zeit','muted'));
+ if(r.goal)root.append(node('p','Auftrag: '+r.goal));
+ const hints=node('section');hints.append(node('h3','Gefundene Bounty-Hinweise'),node('p',r.bountyNote));
+ for(const b of r.bounties){const card=node('article',undefined,'research-bounty');card.append(node('strong',b.amount+' ausgeschrieben'),node('span',b.state,'research-badge'),link('Issue #'+b.number+' · '+b.title,b.url));hints.append(card);}root.append(hints);
+ section('Was gefunden und geprüft wurde',r.found);section('Was noch offen ist',r.open);
+ const scope=node('section');scope.append(node('h3','Quellenabdeckung'));const table=node('table');const head=node('tr');for(const label of ['Bereich','Ergebnis','Umfang'])head.append(node('th',label));const thead=node('thead');thead.append(head);table.append(thead);const body=node('tbody');for(const c of r.coverage){const row=node('tr'),name=node('td');name.append(c.url?link(c.title,c.url):node('span',c.title));row.append(name,node('td',c.label),node('td',c.partial?'Begrenzt / offen':c.status==='observed'?'Gespeicherte Quelle':'Keine Beiträge geprüft'));body.append(row);}table.append(body);scope.append(table);root.append(scope);
+ const evidence=node('section');evidence.append(node('h3','Fundstellen und Quellenauszüge'));for(const s of r.sources){const details=node('details');details.append(node('summary',s.title+(s.truncated?' · gekürzt':'')),link('Originalquelle öffnen ↗',s.url),node('pre',s.text));evidence.append(details);}root.append(evidence);
+ return root;
+}
