@@ -31,7 +31,7 @@ const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',mo
 
 export const businessDay=ms=>dayFormat.format(ms);
 
-export function periodRange(period,now=Date.now()){
+export function periodRange(period,now=Date.now(),beginningDay='1970-01-01'){
 
  const today=businessDay(now),[y,m,d]=today.split('-').map(Number);
 
@@ -39,9 +39,10 @@ export function periodRange(period,now=Date.now()){
 
  if(period==='week')return {from:utcDay(y,m,d-6),to:today};
 
- if(period==='month')return {from:utcDay(y,m-1,1),to:utcDay(y,m,0)};
+ if(period==='month'){const start=new Date(Date.UTC(y,m-2,1));const sy=start.getUTCFullYear(),sm=start.getUTCMonth()+1;return {from:utcDay(sy,sm,Math.min(d,new Date(Date.UTC(sy,sm,0)).getUTCDate())),to:today};}
 
- if(period==='year')return {from:`${y-1}-01-01`,to:`${y-1}-12-31`};
+ if(period==='year')return {from:utcDay(y-1,m,Math.min(d,new Date(Date.UTC(y-1,m,0)).getUTCDate())),to:today};
+ if(period==='all')return {from:beginningDay,to:today};
 
  return {from:today,to:today};
 
@@ -72,7 +73,8 @@ export function founderControls(status){
 
 export function financialSummary(s,period,now=Date.now()){
 
- const range=periodRange(period,now),report=s.financeReport;
+ const days=[s.financeBeginningDay,...(s.financeLedger?.entries??[]).map(e=>e.day),...(s.autonomy?.budget?.entries??[]).map(e=>e.day),...(s.financeReport?.transactions??[]).map(t=>businessDay(t.created*1000)),...(s.billing?.providers??[]).flatMap(p=>(p.rows??[]).map(r=>r.day))].filter(d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&d<=businessDay(now)).sort();
+ const range=periodRange(period,now,days[0]),report=s.financeReport;
 
  const inside=day=>day>=range.from&&day<=range.to;
 
@@ -118,7 +120,7 @@ export function financialSummary(s,period,now=Date.now()){
 
  const unresolvedBilling=s.billing&&(s.billing.providers?.length!==2||s.billing.providers.some(p=>p.status!=='connected'||p.from>range.from||p.rows.some(r=>r.day>=range.from&&r.day<=range.to&&r.amount!==0&&!(s.financeLedger?.entries??[]).some(e=>e.kind==='expense'&&e.day===r.day&&r.reference&&e.evidence===r.reference))));
  const unresolvedCostInvoices=Boolean(unresolvedBilling)||(s.costImport?.invoices??[]).some(i=>!['ready','excluded'].includes(i.reason));
- const reconciled=s.financeStatus?.reportAvailable!==false&&!unresolvedCostInvoices&&covered&&!unknown&&reservedMinor===0&&s.autonomy?.budget?.entriesComplete!==false&&Object.keys(currencies).every(c=>c==='chf')&&closure?.complete===true;
+ const reconciled=!['month','year','all'].includes(period)&&s.financeStatus?.reportAvailable!==false&&!unresolvedCostInvoices&&covered&&!unknown&&reservedMinor===0&&s.autonomy?.budget?.entriesComplete!==false&&Object.keys(currencies).every(c=>c==='chf')&&closure?.complete===true;
 
  const chf=currencies.chf??{receiptsMinor:0,refundsMinor:0,feesMinor:0};
 
@@ -126,6 +128,7 @@ export function financialSummary(s,period,now=Date.now()){
  const reconciliationIssues=[],billingDetails=[];
  let convertedCosts=0,matchedBillingCount=0,conversionMissing=false,ambiguousOverlap=false,partial=!covered;
  if(s.financeStatus?.reportAvailable===false){partial=true;reconciliationIssues.push(s.financeStatus.reason==='powered-off'?'Numaron ist ausgeschaltet; gespeicherter Einnahmenstand verwendet.':'Aktueller Einnahmenabruf fehlgeschlagen; letzter gespeicherter Stand verwendet.');}
+ if(period==='all'){partial=true;reconciliationIssues.push('Seit Beginn: alle gespeicherten Buchungen; Vollständigkeit vor dem ältesten Beleg ist nicht bestätigt.');}
  if(!covered)reconciliationIssues.push('Stripe-Daten für den Zeitraum sind unvollständig.');
  const allExpenses=(s.financeLedger?.entries??[]).filter(e=>e.kind==='expense');
  for(const p of s.billing?.providers??[]){

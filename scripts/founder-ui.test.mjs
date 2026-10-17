@@ -8,12 +8,12 @@ test('self-directed overview asks only for explicit personal exceptions and pres
  assert.deepEqual(founderControls('running').map(x=>x[0]),['pause','stop','emergency-stop']);assert.deepEqual(founderControls('emergency_stopped').map(x=>x[0]),['start']);
 });
 
-test('Zurich periods use local midnight, inclusive seven days and previous calendar month/year',()=>{
+test('Zurich periods use local midnight, inclusive seven days and rolling month/year',()=>{
  const now=Date.parse('2026-10-13T10:00:00Z');
  assert.deepEqual(periodRange('today',now),{from:'2026-10-13',to:'2026-10-13'});
  assert.deepEqual(periodRange('week',now),{from:'2026-10-07',to:'2026-10-13'});
- assert.deepEqual(periodRange('month',now),{from:'2026-09-01',to:'2026-09-30'});
- assert.deepEqual(periodRange('year',now),{from:'2025-01-01',to:'2025-12-31'});
+ assert.deepEqual(periodRange('month',now),{from:'2026-09-13',to:'2026-10-13'});
+ assert.deepEqual(periodRange('year',now),{from:'2025-10-13',to:'2026-10-13'});
  assert.equal(periodRange('today',Date.parse('2026-10-12T22:30:00Z')).from,'2026-10-13');
 });
 test('metrics and attention use the same exact task subsets',()=>{

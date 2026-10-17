@@ -812,13 +812,14 @@ function reviewPanel(p){const panel=el('article',undefined,'notice');panel.appen
 
 function money(minor,currency='CHF'){return minor===null||minor===undefined?'Nicht belegt':new Intl.NumberFormat('de-CH',{style:'currency',currency:currency.toUpperCase()}).format(minor/(10**new Intl.NumberFormat('de-CH',{style:'currency',currency:currency.toUpperCase()}).resolvedOptions().maximumFractionDigits));}
 
-function periodButtons(){const group=el('div',undefined,'period-buttons');group.setAttribute('role','group');group.setAttribute('aria-label','Finanzzeitraum');for(const [key,label] of [['today','Heute'],['week','Letzte 7 Tage'],['month','Letzter Monat'],['year','Letztes Jahr']]){const button=el('button',label);button.dataset.period=key;button.setAttribute('aria-pressed',String(financialPeriod===key));button.onclick=()=>choosePeriod(key);group.append(button);}return group;}
+function periodButtons(){const group=el('div',undefined,'period-buttons');group.setAttribute('role','group');group.setAttribute('aria-label','Finanzzeitraum');for(const [key,label] of [['today','Heute'],['week','Letzte 7 Tage'],['month','1 Monat zurück'],['year','1 Jahr zurück'],['all','Seit Beginn']]){const button=el('button',label);button.dataset.period=key;button.setAttribute('aria-pressed',String(financialPeriod===key));button.onclick=()=>choosePeriod(key);group.append(button);}return group;}
 
 function choosePeriod(key){if(hasUnsavedDraft()){$('error').textContent='Bitte zuerst den Beleg speichern oder die Eingaben leeren.';return;}financialPeriod=key;const saved=saveFinancePeriod(financePeriodStorage,key);if(!saved)$('error').textContent='Zeitraum nur für diese Sitzung übernommen: Browser-Speicher nicht verfügbar.';if(snapshot)renderFinancialDetails();}
 
 function renderFinancialDetails(){
 
- const f=financialSummary(snapshot,financialPeriod),date=d=>d.split('-').reverse().join('.');
+ const incomeDays=(typeof orderIncome==='undefined'?[]:orderIncome?.receipts??[]).map(r=>businessDay(Date.parse(r.receivedAt))).sort();
+ const f=financialSummary({...snapshot,financeBeginningDay:incomeDays[0]},financialPeriod),date=d=>d.split('-').reverse().join('.');
 
  const range=date(f.from)+' – '+date(f.to)+' · Europe/Zurich';$('overviewPeriod').textContent=range;
 
@@ -962,10 +963,11 @@ function renderReconciliation(box,f,date){
 
  const label=el('label','Bestätigung deiner vollständigen Angaben'),proof=el('input');proof.type='text';proof.maxLength=400;proof.dataset.draft='true';proof.placeholder='z. B. Alle numaron-Rechnungen und bezahlten CHF-Beträge für diesen Zeitraum erfasst';label.append(proof);close.append(label);
 
- const confirm=el('button','Alle Geschäftsbuchungen erfasst – Zeitraum abschließen');confirm.disabled=f.unresolvedCostInvoices||!f.covered||f.unknown||Object.keys(f.currencies).some(c=>c!=='chf')||f.reservedMinor>0;
+ const confirm=el('button','Alle Geschäftsbuchungen erfasst – Zeitraum abschließen');confirm.disabled=['month','year','all'].includes(financialPeriod)||f.unresolvedCostInvoices||!f.covered||f.unknown||Object.keys(f.currencies).some(c=>c!=='chf')||f.reservedMinor>0;
 
  confirm.onclick=async()=>{if(proof.value.trim().length<10){$('error').textContent='Bitte den geprüften Belegumfang angeben.';return;}confirm.disabled=true;try{await api('/api/finance',{action:'close',period:financialPeriod,fingerprint:snapshot.financeLedger?.closures?.[financialPeriod]?.fingerprint,evidence:proof.value});proof.defaultValue=proof.value;await refresh();}catch(e){$('error').textContent='Abgleich nicht übernommen. Ansicht aktualisieren und Belege erneut prüfen. '+e.message;confirm.disabled=false;}};close.append(confirm);
 
+ if(['month','year','all'].includes(financialPeriod))close.append(el('p','Diese erweiterte Zeitraumansicht dient der Auswertung. Der manuelle vollständige Abschluss ist dafür noch nicht freigeschaltet.'));
  if(confirm.disabled)close.append(el('p','Zuerst ungeklärte Kostenbelege, vollständige Stripe-Daten, geklärte Buchungsarten und CHF-Beträge sicherstellen; laufende Kostenreservierungen abwarten.'));
 
  if(f.reconciled)close.append(el('p','Abgeglichen am '+new Date(f.closure.at).toLocaleString('de-CH')+' · '+f.closure.evidence));box.append(close);
