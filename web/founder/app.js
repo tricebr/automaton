@@ -1,3 +1,4 @@
+import {restoreFinancePeriod,saveFinancePeriod} from './finance-refresh.mjs';
 import {parseSourceOverview,renderSourceOverview} from './interaction.mjs';
 import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs';
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
@@ -7,7 +8,8 @@ import {outsideDialog,taskProgress,readableResult,liveTrading,draftChanged,remem
 
 import {renderTradingEngine,renderTradeHighlight} from './trading.mjs';
 
-let financialPeriod='today';
+let financePeriodStorage;try{financePeriodStorage=window.localStorage;}catch{}
+let financialPeriod=restoreFinancePeriod(financePeriodStorage);
 
 /* This UI never executes HTML from product files or external reports. */
 
@@ -812,7 +814,7 @@ function money(minor,currency='CHF'){return minor===null||minor===undefined?'Nic
 
 function periodButtons(){const group=el('div',undefined,'period-buttons');group.setAttribute('role','group');group.setAttribute('aria-label','Finanzzeitraum');for(const [key,label] of [['today','Heute'],['week','Letzte 7 Tage'],['month','Letzter Monat'],['year','Letztes Jahr']]){const button=el('button',label);button.dataset.period=key;button.setAttribute('aria-pressed',String(financialPeriod===key));button.onclick=()=>choosePeriod(key);group.append(button);}return group;}
 
-function choosePeriod(key){if(hasUnsavedDraft()){$('error').textContent='Bitte zuerst den Beleg speichern oder die Eingaben leeren.';return;}financialPeriod=key;if(snapshot)renderFinancialDetails();}
+function choosePeriod(key){if(hasUnsavedDraft()){$('error').textContent='Bitte zuerst den Beleg speichern oder die Eingaben leeren.';return;}financialPeriod=key;const saved=saveFinancePeriod(financePeriodStorage,key);if(!saved)$('error').textContent='Zeitraum nur für diese Sitzung übernommen: Browser-Speicher nicht verfügbar.';if(snapshot)renderFinancialDetails();}
 
 function renderFinancialDetails(){
 

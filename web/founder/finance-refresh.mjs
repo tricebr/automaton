@@ -1,3 +1,6 @@
+const financePeriods=['today','week','month','year'];
+export function restoreFinancePeriod(storage){try{const value=storage.getItem('numaron-founder-finance-period');return financePeriods.includes(value)?value:'week';}catch{return 'week';}}
+export function saveFinancePeriod(storage,value){if(!financePeriods.includes(value))return false;try{storage.setItem('numaron-founder-finance-period',value);return true;}catch{return false;}}
 export function mergeFinanceSnapshot(base={},finance){
  if(!finance)return base;
  const result={...base};
