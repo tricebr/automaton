@@ -2,6 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {parseSourceOverview,sourceOverviewCards,renderSourceOverview} from '../web/founder/interaction.mjs';
 import {readFileSync} from 'node:fs';
+test('each source retains its own actual check time when another source is refreshed',()=>{
+ const cards=sourceOverviewCards({checkedAt:'2026-10-17T01:00:00Z',ugig:{checkedAt:'2026-10-17T00:20:03Z',storage:'independently_confirmed',status:'pending'},guru:{checkedAt:'2026-10-17T00:50:00Z',reachable:false}});
+ assert.match(cards[0].checkedAt,/02:20:03/);assert.match(cards[1].checkedAt,/02:50:00/);
+});
 test('overview renders saved evidence with safe read-only links and initializes before boot',()=>{
  class Element{constructor(tag){this.tag=tag;this.children=[];}append(...n){this.children.push(...n);}replaceChildren(...n){this.children=n;}text(){return (this.textContent??'')+' '+this.children.map(n=>n.text()).join(' ');}}
  const fixture={schema:'numaron-source-overview-v1',checkedAt:'2026-10-17T00:20:03Z',ugig:{storage:'independently_confirmed',status:'pending',proposedUSD:300},guru:{reachable:true,page:3,rows:20,total:182}};
