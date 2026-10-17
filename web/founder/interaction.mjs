@@ -1,3 +1,16 @@
+export function parseSourceOverview(text){
+ const m=text.match(/\/\* SOURCE_OVERVIEW_JSON\r?\n([\s\S]*?)\r?\nEND_SOURCE_OVERVIEW_JSON \*\//);if(!m)throw Error('Quellenstand fehlt');
+ const p=JSON.parse(m[1]);if(p.schema!=='numaron-source-overview-v1'||!Number.isFinite(Date.parse(p.checkedAt))||!p.ugig||!p.guru)throw Error('Quellenstand ungültig');return p;
+}
+export function sourceOverviewCards(p){
+ const checkedAt=new Date(p.checkedAt).toLocaleString('de-CH',{timeZone:'Europe/Zurich'});
+ return [{name:'ugig',status:p.ugig.storage==='independently_confirmed'?'Bewerbung bestätigt gespeichert · '+(p.ugig.status==='pending'?'Antwort ausstehend':'Status erneut prüfen'):'Speicherung ungeklärt',detail:'Python-GUI-Auftrag · Angebot USD '+(p.ugig.proposedUSD??'nicht belegt')+'. Noch keine Auftragszusage oder Zahlung. Bestehende Bewerbung beobachten; nicht erneut absenden.',url:'https://ugig.net/dashboard/applications',checkedAt},
+ {name:'Guru',status:p.guru.reachable===true?'Erreichbar · in der Quellenrotation':'Zugriff nicht bestätigt',detail:p.guru.reachable===true?'Zuletzt Seite '+p.guru.page+' mit '+p.guru.rows+' Einträgen geprüft. '+p.guru.total+' ausgeschriebene Aufträge laut Plattform; keine vollständige Prüfung aller Einträge. Nächster Schritt: Recherche fortsetzen. Kein eigener Auftrag oder Zahlungsschutz bestätigt.':'Zugriff muss erneut lesend geprüft werden.',url:'https://www.guru.com/d/jobs/',checkedAt}];
+}
+export function renderSourceOverview(box,p,doc=document){
+ if(!box)return;const el=(tag,text)=>{const n=doc.createElement(tag);n.textContent=text;return n;};box.replaceChildren(el('h2','Auftragsquellen & Bewerbungen'),el('p','Zuletzt belegter Stand aus dem Heartbeat · keine Live-Zusage.'));
+ for(const c of sourceOverviewCards(p)){const card=el('article','');card.className='notice';const link=el('a','Plattform öffnen ↗');link.href=c.url;link.target='_blank';link.rel='noopener noreferrer';card.append(el('h3',c.name),el('strong',c.status),el('p',c.detail),el('small','Geprüft: '+c.checkedAt+' · Schweizer Zeit'),el('p',''),link);box.append(card);}
+}
 export function outsideDialog(x,y,rect){return x<rect.left||x>rect.right||y<rect.top||y>rect.bottom;}
 const explanations=[
  [/mission fortschritt/i,'Anteil der abgeschlossenen Missionen an den aktuell erfassten Missionen. Wartende, fehlgeschlagene und noch geprüfte Aufgaben zählen nicht als abgeschlossen.'],

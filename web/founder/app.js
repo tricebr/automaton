@@ -1,3 +1,4 @@
+import {parseSourceOverview,renderSourceOverview} from './interaction.mjs';
 import {mergeFinanceSnapshot,financeRefreshMessage} from './finance-refresh.mjs';
 import {renderLongHistory,formatHistoryReport,formatHistoryLessons,formatHistoryCoverage} from './long-history.mjs';
 import {workGroups, financialSummary, businessDay, automaticContinuation, founderControls, missionDeck, runtimeHealth, capabilityStatus, taskWaitText, codeCapability} from './model.mjs';
@@ -15,6 +16,7 @@ let financialPeriod='today';
 let radarDisplayed=null;
 
 let snapshot,csrf='',filter='Alle',busy=false;
+let sourceOverviewBusy=false;
 let archiveState={items:[],total:null,nextCursor:null,loading:false,loaded:false,error:null};
 async function loadArchive(more=false){
  if(archiveState.loading)return;archiveState.loading=true;archiveState.error=null;renderArchive();
@@ -345,7 +347,7 @@ function renderTradeReview(data){
 
 
 
-async function refresh(){void refreshPower();void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){document.querySelector('.neural-reactor')?.setAttribute('data-state','unknown');if($('reactorStatus'))$('reactorStatus').textContent='VERBINDUNG UNTERBROCHEN';if($('reactorDetail'))$('reactorDetail').textContent='Letzter Datenstand · Status wird geprüft';renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
+async function refresh(){void refreshSourceOverview();void refreshPower();void refreshFinance();void refreshHistory();if(busy||hasUnsavedDraft())return;busy=true;try{$('error').textContent='';snapshot=mergeFinanceSnapshot(await api('/api/snapshot'),latestFinance);csrf=snapshot.csrf;render();$('connectionLabel').textContent='Oberfläche verbunden';$('connectionDot').classList.add('connected');}catch(e){document.querySelector('.neural-reactor')?.setAttribute('data-state','unknown');if($('reactorStatus'))$('reactorStatus').textContent='VERBINDUNG UNTERBROCHEN';if($('reactorDetail'))$('reactorDetail').textContent='Letzter Datenstand · Status wird geprüft';renderRadar({status:'data-missing',setups:[],issues:['Dashboard-Verbindung unterbrochen.']});renderTrading(null);renderCoinbase(null);renderStripe(null);$('controller').textContent='Dienst nicht erreichbar';$('controllerDetail').textContent='Angezeigte Aufgaben sind der letzte geladene Stand. Änderungen benötigen eine neue Verbindung.';document.querySelectorAll('#operations button,#attentionList button,#workList button,#autonomyControls button,#checkResults button').forEach(b=>b.disabled=true);$('error').textContent=e.message;$('connectionLabel').textContent='Verbindung unterbrochen';$('connectionDot').classList.remove('connected');}finally{busy=false;}}
 
 
 
@@ -625,7 +627,7 @@ function renderUsage(report){
 
 
 
-const views={trading:['trading'],work:['work'],checks:['checks'],overview:['aiHud','startTrading','longHistory','overview','nextAction','missionDeck','control','usage'],operations:['operations','autonomousWork','research'],products:['products'],archive:['archive'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
+const views={trading:['trading'],work:['work'],checks:['checks'],overview:['sourceOverview','aiHud','startTrading','longHistory','overview','nextAction','missionDeck','control','usage'],operations:['sourceOverview','operations','autonomousWork','research'],products:['products'],archive:['archive'],finance:['finance','trading'],approvals:['checks','approvals','activity']};
 
 function applyView(){
 
@@ -1139,3 +1141,5 @@ helpBubble.addEventListener('pointerenter',()=>clearTimeout(helpTimer));helpBubb
 document.addEventListener('keydown',event=>{if(event.key==='Escape')hideHelp();});document.addEventListener('pointerdown',event=>{if(!helpBubble.contains(event.target)&&!event.target.closest('.help-trigger'))hideHelp();});
 window.addEventListener('resize',()=>{if(helpAnchor)placeHelp();});window.addEventListener('scroll',()=>{if(helpAnchor)placeHelp();},true);
 let helpScheduled=false;new MutationObserver(()=>{if(helpScheduled)return;helpScheduled=true;queueMicrotask(()=>{helpScheduled=false;installHelp();});}).observe(document.querySelector('main'),{childList:true,subtree:true});installHelp();
+
+async function refreshSourceOverview(){if(sourceOverviewBusy)return;sourceOverviewBusy=true;try{const r=await fetch('/interaction.mjs',{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw Error();renderSourceOverview($('sourceOverview'),parseSourceOverview(await r.text()));}catch{const box=$('sourceOverview');if(box)box.textContent='Quellenübersicht derzeit nicht verfügbar. Keine erfolgreiche Prüfung bestätigt.';}finally{sourceOverviewBusy=false;}}
